@@ -286,3 +286,15 @@ define KernelPackage/pcspkr/description
 endef
 
 $(eval $(call KernelPackage,pcspkr))
+
+
+define KernelPackage/sound-i2s
+  TITLE:=I2S Audio Support
+  $(call AddDepends/sound)
+endef
+
+define KernelPackage/sound-i2s/description
+  Blablablabla
+endef
+
+$(eval $(call KernelPackage,sound-i2s))
