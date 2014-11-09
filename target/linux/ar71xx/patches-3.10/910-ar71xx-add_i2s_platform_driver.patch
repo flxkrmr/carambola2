@@ -14,7 +14,7 @@
 +obj-$(CONFIG_SND_AR71XX_SOC_I2S) += snd-soc-ar71xx-i2s.o
 --- /dev/null
 +++ b/sound/soc/ar71xx/ar71xx-i2s.c
-@@ -0,0 +1,53 @@
+@@ -0,0 +1,143 @@
 +/*
 + * ALSA SoC I2S Audio Layer for AR9331
 + *
@@ -68,6 +68,96 @@
 +/* STEREO_CLOCK_DIV masks */
 +#define AR71XX_I2S_DIV_INT(v)			((v) << 16)
 +#define AR71XX_I2S_DIV_FRAC(v)			(v)
++
++
++//XXX for testing
++/* GPIO registers */
++#define AR71XX_GPIO_BASE			(0x18040000)
++#define AR71XX_GPIO_OE				((AR71XX_GPIO_BASE) + 0x00)
++#define AR71XX_GPIO_IN				((AR71XX_GPIO_BASE) + 0x04)
++#define AR71XX_GPIO_OUT				((AR71XX_GPIO_BASE) + 0x08)
++#define AR71XX_GPIO_SET				((AR71XX_GPIO_BASE) + 0x0C)
++#define AR71XX_GPIO_CLEAR			((AR71XX_GPIO_BASE) + 0x10)
++#define AR71XX_GPIO(v)				(1 << (v))
++
++#include <linux/init.h>		// __init, __exit
++#include <linux/module.h>	// macros (MODULE...)
++#include <linux/fs.h>		// struct file_operations
++
++
++/* virtual register address */
++//XXX gpio test
++static void *gpio_oe;
++static void *gpio_set;
++static void *gpio_clear;
++
++//XXX gpio test
++void setup_gpio(void)
++{
++	#define MY_GPIO		10
++	uint32_t val = 0;
++	val |= AR71XX_GPIO(MY_GPIO);
++
++	gpio_oe = val;
++	gpio_set = val;
++
++	#undef MY_GPIO
++}
++
++
++void end_gpio(void)
++{
++	#define MY_GPIO		10
++	uint32_t val = 0;
++	val |= AR71XX_GPIO(MY_GPIO);
++
++	gpio_clear = val;
++	#undef MY_GPIO
++}
++
++static struct file_operations fops = {
++	.owner = THIS_MODULE,
++//	.read = driver_read,
++//	.open = driver_open,
++//	.release = driver_close,
++};
++
++static int __init mod_init(void)
++{
++	if (register_chrdev(240, "I2S Driver", &fops) != 0) {
++		printk("Initializing I2S Driver failed\n");
++		return -EIO;
++	}
++
++	/* request i/o remapping */
++	// XXX gpio test 
++	// TODO test sizes!
++	gpio_out = ioremap(AR71XX_GPIO_OE, SZ_64K);
++	gpio_set = ioremap(AR71XX_GPIO_SET, SZ_64K);
++	gpio_clear = ioremap(AR71XX_GPIO_CLEAR, SZ_64K);
++
++
++	setup_gpio();
++
++	return 0;
++}
++
++static void __exit mod_exit(void)
++{
++	iounmap(gpio_out);	
++	iounmap(gpio_set);	
++	iounmap(gpio_clear);	
++
++	unregister_chrdev(BCM2708_BIT_READER_MAJNUM, "Bit Reader");
++}
++
++module_init (mod_init);
++module_exit (mod_exit);
++
++MODULE_AUTHOR("Felix Kramer");
++MODULE_LICENSE("GPL"); 
++MODULE_DESCRIPTION("Reads a bit stream and generates a clock");
++MODULE_SUPPORTED_DEVICE("Raspberry Pi (BCM2835)");
 --- a/sound/soc/Kconfig
 +++ b/sound/soc/Kconfig
 @@ -34,6 +34,7 @@ config SND_SOC_GENERIC_DMAENGINE_PCM
