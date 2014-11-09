@@ -1,0 +1,41 @@
+--- /dev/null
++++ b/sound/soc/ar71xx/Kconfig
+@@ -0,0 +1,4 @@
++config SND_AR71XX_SOC_I2S
++	tristate "SoC Aduio support for the AR71XX I2S Module"
++	help
++	  Say Y or M...
+--- /dev/null
++++ b/sound/soc/ar71xx/Makefile
+@@ -0,0 +1,4 @@
++# AR71XX Platform Support
++snd-soc-ar71xx-i2s-objs := ar71xx-i2s.o
++
++obj-$(CONFIG_SND_AR71XX_SOC_I2S) += snd-soc-ar71xx-i2s.o
+--- /dev/null
++++ b/sound/soc/ar71xx/ar71xx-i2s.c
+@@ -0,0 +1,4 @@
++/*
++ * ALSA SoC I2S Audio Layer for AR9331
++ *
++ */
+--- a/sound/soc/Kconfig
++++ b/sound/soc/Kconfig
+@@ -34,6 +34,7 @@ config SND_SOC_GENERIC_DMAENGINE_PCM
+ 	select SND_SOC_DMAENGINE_PCM
+ 
+ # All the supported SoCs
++source "sound/soc/ar71xx/Kconfig"
+ source "sound/soc/atmel/Kconfig"
+ source "sound/soc/au1x/Kconfig"
+ source "sound/soc/blackfin/Kconfig"
+--- a/sound/soc/Makefile
++++ b/sound/soc/Makefile
+@@ -12,6 +12,7 @@ endif
+ obj-$(CONFIG_SND_SOC)	+= snd-soc-core.o
+ obj-$(CONFIG_SND_SOC)	+= codecs/
+ obj-$(CONFIG_SND_SOC)	+= generic/
++obj-$(CONFIG_SND_SOC)	+= ar71xx/
+ obj-$(CONFIG_SND_SOC)	+= atmel/
+ obj-$(CONFIG_SND_SOC)	+= au1x/
+ obj-$(CONFIG_SND_SOC)	+= blackfin/
