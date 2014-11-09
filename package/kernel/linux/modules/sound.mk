@@ -290,6 +290,9 @@ $(eval $(call KernelPackage,pcspkr))
 
 define KernelPackage/sound-i2s
   TITLE:=I2S Audio Support
+  KCONFIG:= \
+	CONFIG_SND_I2S
+  FILES:= \
   $(call AddDepends/sound)
 endef
 
