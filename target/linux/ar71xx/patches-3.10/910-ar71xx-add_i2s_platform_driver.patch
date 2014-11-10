@@ -14,7 +14,7 @@
 +obj-$(CONFIG_SND_AR71XX_SOC_I2S) += snd-soc-ar71xx-i2s.o
 --- /dev/null
 +++ b/sound/soc/ar71xx/ar71xx-i2s.c
-@@ -0,0 +1,143 @@
+@@ -0,0 +1,146 @@
 +/*
 + * ALSA SoC I2S Audio Layer for AR9331
 + *
@@ -79,6 +79,8 @@
 +#define AR71XX_GPIO_SET				((AR71XX_GPIO_BASE) + 0x0C)
 +#define AR71XX_GPIO_CLEAR			((AR71XX_GPIO_BASE) + 0x10)
 +#define AR71XX_GPIO(v)				(1 << (v))
++#define AR71XX_TEST_GPIO			23
++#define AR71XX_I2S_DRIVER_MAJ_NUM		240
 +
 +#include <linux/init.h>		// __init, __exit
 +#include <linux/module.h>	// macros (MODULE...)
@@ -87,32 +89,28 @@
 +
 +/* virtual register address */
 +//XXX gpio test
-+static void *gpio_oe;
-+static void *gpio_set;
-+static void *gpio_clear;
++static uint32_t *gpio_oe;
++static uint32_t *gpio_out;
++static uint32_t *gpio_set;
++static uint32_t *gpio_clear;
 +
 +//XXX gpio test
 +void setup_gpio(void)
 +{
-+	#define MY_GPIO		10
 +	uint32_t val = 0;
-+	val |= AR71XX_GPIO(MY_GPIO);
++	uint32_t tmp_val;
 +
-+	gpio_oe = val;
-+	gpio_set = val;
++	//enable output pin
++	val = *gpio_oe;
++	val |= AR71XX_GPIO(AR71XX_TEST_GPIO);
++	*gpio_oe = val;
++	
++	//set pin
++	*gpio_clear = AR71XX_GPIO(AR71XX_TEST_GPIO);
 +
-+	#undef MY_GPIO
-+}
-+
-+
-+void end_gpio(void)
-+{
-+	#define MY_GPIO		10
-+	uint32_t val = 0;
-+	val |= AR71XX_GPIO(MY_GPIO);
-+
-+	gpio_clear = val;
-+	#undef MY_GPIO
++	//print output value register
++	tmp_val = *gpio_out; 
++	printk("GPIO_OUT: 0x%02X\n", tmp_val);
 +}
 +
 +static struct file_operations fops = {
@@ -124,18 +122,20 @@
 +
 +static int __init mod_init(void)
 +{
-+	if (register_chrdev(240, "I2S Driver", &fops) != 0) {
++	if (register_chrdev(AR71XX_I2S_DRIVER_MAJ_NUM, "I2S Driver", &fops) != 0) {
 +		printk("Initializing I2S Driver failed\n");
 +		return -EIO;
 +	}
 +
++	printk("initialized I2S Driver\n");
++
 +	/* request i/o remapping */
 +	// XXX gpio test 
 +	// TODO test sizes!
-+	gpio_out = ioremap(AR71XX_GPIO_OE, SZ_64K);
-+	gpio_set = ioremap(AR71XX_GPIO_SET, SZ_64K);
-+	gpio_clear = ioremap(AR71XX_GPIO_CLEAR, SZ_64K);
-+
++	gpio_oe = ioremap(AR71XX_GPIO_OE, 1);
++	gpio_out = ioremap(AR71XX_GPIO_OUT, 1);
++	gpio_set = ioremap(AR71XX_GPIO_SET, 1);
++	gpio_clear = ioremap(AR71XX_GPIO_CLEAR, 1);
 +
 +	setup_gpio();
 +
@@ -144,11 +144,14 @@
 +
 +static void __exit mod_exit(void)
 +{
++	iounmap(gpio_oe);	
 +	iounmap(gpio_out);	
 +	iounmap(gpio_set);	
 +	iounmap(gpio_clear);	
 +
-+	unregister_chrdev(BCM2708_BIT_READER_MAJNUM, "Bit Reader");
++	unregister_chrdev(AR71XX_I2S_DRIVER_MAJ_NUM, "I2S Driver");
++
++	printk("exited I2S Driver\n");
 +}
 +
 +module_init (mod_init);
@@ -156,8 +159,8 @@
 +
 +MODULE_AUTHOR("Felix Kramer");
 +MODULE_LICENSE("GPL"); 
-+MODULE_DESCRIPTION("Reads a bit stream and generates a clock");
-+MODULE_SUPPORTED_DEVICE("Raspberry Pi (BCM2835)");
++MODULE_DESCRIPTION("GPIO test driver");
++MODULE_SUPPORTED_DEVICE("non");
 --- a/sound/soc/Kconfig
 +++ b/sound/soc/Kconfig
 @@ -34,6 +34,7 @@ config SND_SOC_GENERIC_DMAENGINE_PCM
