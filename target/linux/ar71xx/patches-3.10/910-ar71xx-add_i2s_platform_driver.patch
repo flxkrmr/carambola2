@@ -14,7 +14,7 @@
 +obj-$(CONFIG_SND_AR71XX_SOC_I2S) += snd-soc-ar71xx-i2s.o
 --- /dev/null
 +++ b/sound/soc/ar71xx/ar71xx-i2s.c
-@@ -0,0 +1,146 @@
+@@ -0,0 +1,346 @@
 +/*
 + * ALSA SoC I2S Audio Layer for AR9331
 + *
@@ -30,13 +30,13 @@
 +
 +/* I2S registers */
 +#define AR71XX_I2S_BASE				0x180B0000
-+#define AR71XX_I2S_STEREO0_CONFIG		(AR71XX_I2S_BASE + 0x00)
-+#define AR71XX_I2S_STEREO0_VOLUME		(AR71XX_I2S_BASE + 0x04)
-+#define AR71XX_I2S_STEREO0_TX_SAMPLE_CNT_LSB	(AR71XX_I2S_BASE + 0x0C)
-+#define AR71XX_I2S_STEREO0_TX_SAMPLE_CNT_MSB	(AR71XX_I2S_BASE + 0x10)
-+#define AR71XX_I2S_STEREO0_RX_SAMPLE_CNT_LSB	(AR71XX_I2S_BASE + 0x14)
-+#define AR71XX_I2S_STEREO0_RX_SAMPLE_CNT_MSB	(AR71XX_I2S_BASE + 0x18)
-+#define AR71XX_I2S_STEREO0_CLK_DIV		(AR71XX_I2S_BASE + 0x1C)
++#define AR71XX_I2S_STEREO0_CONFIG		((AR71XX_I2S_BASE) + 0x00)
++#define AR71XX_I2S_STEREO0_VOLUME		((AR71XX_I2S_BASE) + 0x04)
++#define AR71XX_I2S_STEREO0_TX_SAMPLE_CNT_LSB	((AR71XX_I2S_BASE) + 0x0C)
++#define AR71XX_I2S_STEREO0_TX_SAMPLE_CNT_MSB	((AR71XX_I2S_BASE) + 0x10)
++#define AR71XX_I2S_STEREO0_RX_SAMPLE_CNT_LSB	((AR71XX_I2S_BASE) + 0x14)
++#define AR71XX_I2S_STEREO0_RX_SAMPLE_CNT_MSB	((AR71XX_I2S_BASE) + 0x18)
++#define AR71XX_I2S_STEREO0_CLK_DIV		((AR71XX_I2S_BASE) + 0x1C)
 +
 +/* STEREO0_CONFIG masks */
 +#define AR71XX_I2S_DIV_BYPASS			BIT(25)
@@ -70,6 +70,7 @@
 +#define AR71XX_I2S_DIV_FRAC(v)			(v)
 +
 +
++#if 0
 +//XXX for testing
 +/* GPIO registers */
 +#define AR71XX_GPIO_BASE			(0x18040000)
@@ -81,11 +82,208 @@
 +#define AR71XX_GPIO(v)				(1 << (v))
 +#define AR71XX_TEST_GPIO			23
 +#define AR71XX_I2S_DRIVER_MAJ_NUM		240
++#endif
 +
-+#include <linux/init.h>		// __init, __exit
-+#include <linux/module.h>	// macros (MODULE...)
-+#include <linux/fs.h>		// struct file_operations
++#include <linux/init.h>
++#include <linux/module.h>
++//#include <linux/device.h>
 +
++#include <sound/core.h>
++#include <sound/pcm.h>
++#include <sound/pcm_params.h>
++#include <sound/initval.h>
++#include <sound/soc.h>
++#include <sound/dmaengine_pcm.h>
++
++
++struct ar71xx_i2s_dev {
++	struct device				*dev;
++	struct snd_dmaengine_dai_dma_data	dma_data[2];
++	unsigned int 				fmt;
++	unsigned int 				bclk_ratio;
++
++	struct regmap *i2s_regmap;
++	struct regmap *gpio_regmap;
++	//struct regmap *clk_regmap;
++};
++
++static int ar71xx_i2s_dai_probe(struct snd_soc_dai *dai)
++{
++	struct ar71xx_i2s_dev *dev = snd_soc_dai_get_drvdata(dai);
++
++	dai->playback_dma_data = &dev->dma_data[SNDRV_PCM_STREAM_PLAYBACK];
++	dai->capture_dma_data = &dev->dma_data[SNDRV_PCM_STREAM_CAPTURE];
++
++	return 0;
++}
++
++static const struct snd_soc_dai_ops ar71xx_i2s_dai_ops = {
++	.startup	= ar71xx_i2s_startup,
++	.shutdown	= ar71xx_i2s_shutdown,
++	.prepare	= ar71xx_i2s_prepare,
++	.trigger	= ar71xx_i2s_trigger,
++	.hw_params	= ar71xx_i2s_hw_params,
++	.set_fmt	= ar71xx_i2s_set_dai_fmt,
++	.set_bclk_ratio	= ar71xx_i2s_set_dai_bclk_ratio
++};
++
++static struct snd_soc_dai_driver ar71xx_i2s_dai = {
++	.name	= "ar71xx-i2s",
++	.probe	= ar71xx_i2s_dai_probe,
++	.playback = {
++		.channels_min = 2,
++		.channels_max = 2,
++		.rates =	SNDRV_PCM_RATE_8000_192000,
++		.formats =	SNDRV_PCM_FMTBIT_S16_LE
++				| SNDRV_PCM_FMTBIT_S24_LE 
++				| SNDRV_PCM_FMTBIT_S32_LE
++		},
++	.capture = {
++		.channels_min = 2,
++		.channels_max = 2,
++		.rates =	SNDRV_PCM_RATE_8000_192000,
++		.formats =	SNDRV_PCM_FMTBIT_S16_LE
++				| SNDRV_PCM_FMTBIT_S24_LE
++				| SNDRV_PCM_FMTBIT_S32_LE
++		},
++	.ops = &ar71xx_i2s_dai_ops, 
++	.symmetric_rates = 1
++};
++
++
++static const struct regmap_config ar71xx_regmap_config[] = {
++	{
++		.reg_bits = 32,
++		.reg_stride = 4,
++		.val_bits = 32,
++		.max_register = AR71XX_I2S_STEREO0_CLK_DIV - AR71XX_I2S_BASE,
++		//.precious_reg = ar71xx_i2s_precious_reg;
++		//.volatile_reg = ar71xx_i2s_volatile_reg;
++		.cache_type = REGCACHE_RBTREE,
++	},
++	{
++		.reg_bits = 32,
++		.reg_stride = 4,
++		.val_bits = 32,
++		.cache_type = REGCACHE_RBTREE,
++	},
++};
++
++static const struct snd_soc_component_driver ar71xx_i2s_component = {
++	.name		= "ar71xx-i2s-comp",
++};
++
++
++static int ar71xx_i2s_probe (struct platform_device *pdev)
++{
++	struct ar71xx_i2s_dev *dev;
++	int i;
++	int ret;
++	struct regmap *regmap[2];
++	struct resource *mem[2];
++
++	for (i = 0; i < 2; i++) {
++		void __iomem *base;
++
++		mem[i] = platform_get_resource(pdev, IORESOURCE_MEM, i);
++		base = devm_ioremap_resource(&pdev->dev, mem[i]);
++		if (IS_ERR(base)) 
++			return PTR_ERR(base);
++		
++
++		regmap[i] = devm_regmap_init_mmio(&pdev->dev, base, 
++		                                  &ar71xx_regmap_config[i]);
++		if (IS_ERR(regmap[i])) {
++			dev_err(&pdev->dev, "I2S probe: regmap init failed\n");
++			return PTR_ERR(regmap[i]);
++		}
++	}
++	dev = devm_kzalloc(&pdev->dev, sizeof(*dev),
++			   GFP_KERNEL);
++	if (IS_ERR(dev))
++		return PTR_ERR(dev);
++
++	dev->i2s_regmap = regmap[0];
++	dev->gpio_regmap = regmap[1];
++
++#if 0
++	/* Set the DMA address */
++	dev->dma_data[SNDRV_PCM_STREAM_PLAYBACK].addr =
++		(dma_addr_t)AR71XX_I2S_FIFO_PHYSICAL_ADDR;
++
++	dev->dma_data[SNDRV_PCM_STREAM_CAPTURE].addr =
++		(dma_addr_t)AR71XX_I2S_FIFO_PHYSICAL_ADDR;
++
++	/* Set the DREQ */
++	dev->dma_data[SNDRV_PCM_STREAM_PLAYBACK].slave_id =
++		BCM2708_DMA_DREQ_PCM_TX;
++	dev->dma_data[SNDRV_PCM_STREAM_CAPTURE].slave_id =
++		BCM2708_DMA_DREQ_PCM_RX;
++
++	/* Set the bus width */
++	dev->dma_data[SNDRV_PCM_STREAM_PLAYBACK].addr_width =
++		DMA_SLAVE_BUSWIDTH_4_BYTES;
++	dev->dma_data[SNDRV_PCM_STREAM_CAPTURE].addr_width =
++		DMA_SLAVE_BUSWIDTH_4_BYTES;
++
++	/* Set burst */
++	dev->dma_data[SNDRV_PCM_STREAM_PLAYBACK].maxburst = 2;
++	dev->dma_data[SNDRV_PCM_STREAM_CAPTURE].maxburst = 2;
++#endif
++
++	/* BCLK ratio - use default */
++	dev->bclk_ratio = 0;
++
++	/* Store the pdev */
++	dev->dev = &pdev->dev;
++	dev_set_drvdata(&pdev->dev, dev);
++
++	ret = snd_soc_register_component(&pdev->dev,
++			&ar71xx_i2s_component, &ar71xx_i2s_dai, 1);
++
++	if (ret) {
++		dev_err(&pdev->dev, "Could not register DAI: %d\n", ret);
++		ret = -ENOMEM;
++		return ret;
++	}
++
++	ret = snd_dmaengine_pcm_register(&pdev->dev,
++				&ar71xx_dmaengine_pcm_config,
++				SND_DMAENGINE_PCM_FLAG_COMPAT);
++	if (ret) {
++		dev_err(&pdev->dev, "Could not register PCM: %d\n", ret);
++		snd_soc_unregister_component(&pdev->dev);
++		return ret;
++	}
++
++
++
++	return 0;
++}
++
++static int ar71xx_i2s_remove (struct platform_device *pdev)
++{
++#if 0
++	snd_dmaengine_pcm_unregister(&pdev->dev);
++	snd_soc_unregister_component(&pdev->dev);
++#endif
++
++	return 0;
++}
++
++
++static struct platform_driver ar71xx_i2s_driver = {
++	.probe		= ar71xx_i2s_probe,
++	.remove		= ar71xx_i2s_remove,
++	.driver		= {
++		.name	= "ar71xx-i2s",
++		.owner	= THIS_MODULE,
++	},
++};
++
++module_platform_driver(ar71xx_i2s_driver);
++
++#if 0
 +
 +/* virtual register address */
 +//XXX gpio test
@@ -119,6 +317,7 @@
 +//	.open = driver_open,
 +//	.release = driver_close,
 +};
++
 +
 +static int __init mod_init(void)
 +{
@@ -156,11 +355,12 @@
 +
 +module_init (mod_init);
 +module_exit (mod_exit);
++#endif
 +
++//TODO MODULE_ALIAS ???
 +MODULE_AUTHOR("Felix Kramer");
-+MODULE_LICENSE("GPL"); 
-+MODULE_DESCRIPTION("GPIO test driver");
-+MODULE_SUPPORTED_DEVICE("non");
++MODULE_LICENSE("GPL v2"); 
++MODULE_DESCRIPTION("AR71XX I2S Interface");
 --- a/sound/soc/Kconfig
 +++ b/sound/soc/Kconfig
 @@ -34,6 +34,7 @@ config SND_SOC_GENERIC_DMAENGINE_PCM
