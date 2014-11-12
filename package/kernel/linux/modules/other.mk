@@ -684,6 +684,7 @@ define KernelPackage/regmap
   KCONFIG:=CONFIG_REGMAP \
 	   CONFIG_REGMAP_SPI \
 	   CONFIG_REGMAP_I2C \
+	   CONFIG_REGMAP_MMIO \
 	   CONFIG_SPI=y
   FILES:= \
 	$(LINUX_DIR)/drivers/base/regmap/regmap-core.ko \
