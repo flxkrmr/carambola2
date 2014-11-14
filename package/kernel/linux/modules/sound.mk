@@ -194,6 +194,16 @@ endef
 $(eval $(call KernelPackage,sound-soc-ac97))
 
 
+define KernelPackage/sound-soc-ar71xx-i2s
+  TITLE:=I2S Driver Module for AR71XX
+  KCONFIG:=CONFIG_SND_SOC_AR71XX_I2S 
+  FILES:=$(LINUX_DIR)/sound/soc/ar71xx/snd-soc-ar71xx-i2s.ko
+  $(call AddDepends/sound)
+endef
+
+$(eval $(call KernelPackage,sound-soc-ar71xx-i2s))
+
+
 define KernelPackage/sound-soc-imx
   TITLE:=IMX SoC support
 ifeq ($(strip $(call CompareKernelPatchVer,$(KERNEL_PATCHVER),lt,3.12.0)),1)
@@ -286,18 +296,3 @@ define KernelPackage/pcspkr/description
 endef
 
 $(eval $(call KernelPackage,pcspkr))
-
-
-define KernelPackage/sound-i2s
-  TITLE:=I2S Audio Support
-  KCONFIG:= \
-	CONFIG_SND_I2S
-  FILES:= \
-  $(call AddDepends/sound)
-endef
-
-define KernelPackage/sound-i2s/description
-  Blablablabla
-endef
-
-$(eval $(call KernelPackage,sound-i2s))
