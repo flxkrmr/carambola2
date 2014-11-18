@@ -1,0 +1,267 @@
+--- a/sound/soc/ar71xx/Kconfig
++++ b/sound/soc/ar71xx/Kconfig
+@@ -1,5 +1,11 @@
+-config SND_SOC_AR71XX_I2S
+-	tristate "SoC Audio support for the AR71XX I2S Module"
++#config SND_SOC_AR71XX_I2S
++#	tristate "SoC Audio support for the AR71XX I2S Module"
++#	#select REGMAP_MMIO
++#	help
++#	  Say Y or M...
++
++config SND_SOC_CLK_TEST_DRIVER
++	tristate "Clock test driver"
+ 	#select REGMAP_MMIO
+ 	help
+ 	  Say Y or M...
+--- a/sound/soc/ar71xx/Makefile
++++ b/sound/soc/ar71xx/Makefile
+@@ -1,4 +1,9 @@
+ # AR71XX Platform Support
+-snd-soc-ar71xx-i2s-objs := ar71xx-i2s.o
++#snd-soc-ar71xx-i2s-objs := ar71xx-i2s.o
+ 
+-obj-$(CONFIG_SND_SOC_AR71XX_I2S) += snd-soc-ar71xx-i2s.o
++#obj-$(CONFIG_SND_SOC_AR71XX_I2S) += snd-soc-ar71xx-i2s.o
++
++#clk test driver
++snd-soc-clk-test-driver-objs := clk-test-driver.o
++
++obj-$(CONFIG_SND_SOC_CLK_TEST_DRIVER) += snd-soc-clk-test-driver.o
+--- /dev/null
++++ b/sound/soc/ar71xx/clk-test-driver.c
+@@ -0,0 +1,202 @@
++/*
++ * I2S Clock test driver
++ *
++ *
++ */
++
++#include "clk-test-driver.h"
++
++#include <linux/init.h>		// __init, __exit
++#include <linux/module.h>	// macros (MODULE...)
++#include <asm/uaccess.h>	// access user space
++#include <linux/fs.h>		// struct file_operations
++#include <linux/version.h>	// kernelversion
++#include <linux/wait.h>		// sleeping while waiting for samples
++#include <linux/sched.h>		// needed by wait.h
++#include <linux/interrupt.h>
++#include <linux/io.h>
++
++
++/* virtual register address */
++static void *i2s_base;
++static void *gpio_base;
++
++struct I2SRegisters
++{
++	uint32_t STEREO0_CONFIG;
++	uint32_t STEREO0_VOLUME;
++	uint32_t STEREO0_TX_SAMPLE_CNT_LSB;
++	uint32_t STEREO0_TX_SAMPLE_CNT_MSB;
++	uint32_t STEREO0_RX_SAMPLE_CNT_LSB;
++	uint32_t STEREO0_RX_SAMPLE_CNT_MSB;
++	uint32_t STEREO0_CLK_DIV;
++};
++
++struct GpioRegisters
++{
++	uint32_t GPIO_OE;
++	uint32_t GPIO_IN;
++	uint32_t GPIO_OUT;
++	uint32_t GPIO_SET;
++	uint32_t GPIO_CLEAR;
++	uint32_t GPIO_INT;
++	uint32_t GPIO_INT_TYPE;
++	uint32_t GPIO_INT_POLARITY;
++	uint32_t GPIO_INT_PENDING;
++	uint32_t GPIO_INT_MASK;
++	uint32_t GPIO_FUNCTION_1;
++	uint32_t GPIO_IN_ETH_SWITCH_LED;
++	uint32_t GPIO_FUNCTION_2;
++};
++
++
++struct GpioRegisters *s_pGpioRegisters;
++struct I2SRegisters *s_pI2SRegisters;
++
++void setup_gpio(void)
++{
++	uint32_t func;
++
++	printk("setup_gpio()\n");
++
++	func = s_pGpioRegisters->GPIO_FUNCTION_1;
++
++	func |= CLK_TEST_DRIVER_I2SO_22_18_EN;
++	func |= CLK_TEST_DRIVER_I2S_MCKEN;
++	func |= CLK_TEST_DRIVER_I2SO_EN;
++
++	s_pGpioRegisters->GPIO_FUNCTION_1 = func;
++
++	
++	printk("GPIO_FUNCTION_1 should be: %08X\n", func);
++	func = s_pGpioRegisters->GPIO_FUNCTION_1;
++	printk("GPIO_FUNCTION_1 actually is: %08X\n", func);
++}
++
++
++void start_clock(int divi, int divf)
++{
++	uint32_t pcm_ctl = 0;
++	uint32_t pcm_div = 0;
++
++	printk("start_clock\n");
++
++	/* Reset I2S Register */
++	s_pI2SRegisters->STEREO0_CONFIG |= CLK_TEST_DRIVER_RESET;
++
++	/* set clock devider */
++	pcm_div = CLK_TEST_DRIVER_DIV_INT(divi) 
++			| CLK_TEST_DRIVER_DIV_FRAC(divf);
++
++	s_pI2SRegisters->STEREO0_CLK_DIV = pcm_div;
++
++	printk("pcm_div should be: %08X\n", pcm_div);
++	pcm_div = s_pI2SRegisters->STEREO0_CLK_DIV;
++	printk("pcm_div actually is: %08X\n", pcm_div);
++
++	/* Setup clock, but don't start it yet */
++	//pcm_ctl = s_pI2SRegisters->STEREO0_CONFIG;
++
++	//pcm_ctl |= CLK_TEST_DRIVER_DIV_BYPASS;
++	//pcm_ctl |= CLK_TEST_DRIVER_AUDIO_CLK_SEL; //176 MHz Clock
++	//pcm_ctl &= ~CLK_TEST_DRIVER_REFCLK_SEL;  //Crystal Clock (no external)
++	//pcm_ctl &= ~CLK_TEST_DRIVER_MCK_SEL; //use audio pll as mclk
++	pcm_ctl |= CLK_TEST_DRIVER_MASTER; //master mode
++	pcm_ctl |= CLK_TEST_DRIVER_I2S_WORD_SIZE; //32 bits
++	//pcm_ctl |= CLK_TEST_DRIVER_POSEDGE(31);
++	pcm_ctl |= CLK_TEST_DRIVER_POSEDGE(65);
++
++	pcm_ctl |= CLK_TEST_DRIVER_ENABLE; //Enable I2S Module
++
++	s_pI2SRegisters->STEREO0_CONFIG = pcm_ctl;		
++	
++	printk("pcm_ctl should be: %08X\n", pcm_ctl);
++	pcm_ctl = s_pI2SRegisters->STEREO0_CONFIG;
++	printk("pcm_ctl actually is: %08X\n", pcm_ctl);
++}
++
++
++void stop_clock(void)
++{	
++	uint32_t pcm_ctl;
++
++	printk("stop_clock\n");
++
++	/* stop clock */
++	pcm_ctl = s_pI2SRegisters->STEREO0_CONFIG;
++	
++	pcm_ctl &= ~CLK_TEST_DRIVER_ENABLE;
++	s_pI2SRegisters->STEREO0_CONFIG = pcm_ctl;
++}
++
++
++
++static int driver_open (struct inode *dev, struct file *instance )
++{
++	printk("driver_open\n");
++	start_clock(3, 0);
++
++	return 0;
++}
++
++static int driver_close (struct inode *dev, struct file *instance )
++{
++	printk("driver_close\n");
++	stop_clock();
++
++	return 0;
++}
++
++
++static ssize_t driver_read (struct file *instanz, char *user, size_t count,
++                            loff_t *offset)
++{
++	/* dummy copy to keep driver alive */
++	copy_to_user(user, "", 1);
++
++	return 1;
++}
++
++static struct file_operations fops = {
++	.owner = THIS_MODULE,
++	.read = driver_read,
++	.open = driver_open,
++	.release = driver_close,
++};
++
++static int __init mod_init(void)
++{
++	if (register_chrdev(CLK_TEST_DRIVER_MAJNUM, "CLK_TEST_DRIVER", &fops) != 0) {
++		printk("Initializing Bit Reader failed\n");
++		return -EIO;
++	}
++
++	/* request i/o remapping */
++	gpio_base = ioremap(CLK_TEST_DRIVER_GPIO_BASE, 0x34);
++	i2s_base = ioremap(CLK_TEST_DRIVER_I2S_BASE, 0x20);
++
++	/* cast io pointer to structs */
++	s_pGpioRegisters = (struct GpioRegisters *)gpio_base;
++	s_pI2SRegisters = (struct I2SRegisters *)i2s_base;
++
++
++	setup_gpio();
++
++	return 0;
++}
++
++static void __exit mod_exit(void)
++{
++	iounmap(i2s_base);	
++	iounmap(gpio_base);	
++
++	unregister_chrdev(CLK_TEST_DRIVER_MAJNUM, "CLK_TEST_DRIVER");
++}
++
++
++module_init (mod_init);
++module_exit (mod_exit);
++
++MODULE_AUTHOR("Felix Kramer");
++MODULE_LICENSE("GPL"); 
++MODULE_DESCRIPTION("I2S Clock test driver");
+--- /dev/null
++++ b/sound/soc/ar71xx/clk-test-driver.h
+@@ -0,0 +1,29 @@
++#ifndef BIT_STREAM
++#define BIT_STREAM
++
++
++#define CLK_TEST_DRIVER_MAJNUM		240
++
++
++#define CLK_TEST_DRIVER_GPIO_BASE	0x18040000
++#define CLK_TEST_DRIVER_I2S_BASE	0x180b0000
++
++#define CLK_TEST_DRIVER_DIV_INT(v)	((v) << 16)
++#define CLK_TEST_DRIVER_DIV_FRAC(v)	(v)
++
++#define CLK_TEST_DRIVER_DIV_BYPASS	BIT(25)
++#define CLK_TEST_DRIVER_AUDIO_CLK_SEL	BIT(24)
++#define CLK_TEST_DRIVER_REFCLK_SEL	BIT(22)
++#define CLK_TEST_DRIVER_ENABLE		BIT(21)
++#define CLK_TEST_DRIVER_RESET		BIT(19)
++#define CLK_TEST_DRIVER_MCK_SEL		BIT(10)
++#define CLK_TEST_DRIVER_MASTER		BIT(8)
++#define CLK_TEST_DRIVER_DATA_WORD_SIZE(v)	(((v)&0x3)<<12)
++#define CLK_TEST_DRIVER_I2S_WORD_SIZE	BIT(11)
++#define CLK_TEST_DRIVER_POSEDGE(v)	((v)&0x7f)
++
++#define CLK_TEST_DRIVER_I2SO_22_18_EN	BIT(29)
++#define CLK_TEST_DRIVER_I2S_MCKEN	BIT(27)
++#define CLK_TEST_DRIVER_I2SO_EN		BIT(26)
++
++#endif /* BIT_STREAM */
