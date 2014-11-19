@@ -15,7 +15,7 @@
 +obj-$(CONFIG_SND_SOC_AR71XX_I2S) += snd-soc-ar71xx-i2s.o
 --- /dev/null
 +++ b/sound/soc/ar71xx/ar71xx-i2s.c
-@@ -0,0 +1,1086 @@
+@@ -0,0 +1,1069 @@
 +/*
 + * ALSA SoC I2S Audio Layer for Broadcom AR71XX SoC
 + *
@@ -95,34 +95,21 @@
 +	AR71XX_CLK_MASH_2,
 +	AR71XX_CLK_MASH_3,
 +};
-+
-+enum {
-+	AR71XX_CLK_SRC_GND = 0,
-+	AR71XX_CLK_SRC_OSC,
-+	AR71XX_CLK_SRC_DBG0,
-+	AR71XX_CLK_SRC_DBG1,
-+	AR71XX_CLK_SRC_PLLA,
-+	AR71XX_CLK_SRC_PLLC,
-+	AR71XX_CLK_SRC_PLLD,
-+	AR71XX_CLK_SRC_HDMI,
-+};
-+
 +#endif
 +
-+/* Most clocks are not useable (freq = 0) */
-+static const unsigned int ar71xx_clk_freq[AR71XX_CLK_SRC_HDMI+1] = {
-+	[AR71XX_CLK_SRC_GND]		= 0,
-+	[AR71XX_CLK_SRC_OSC]		= 19200000,
-+	[AR71XX_CLK_SRC_DBG0]		= 0,
-+	[AR71XX_CLK_SRC_DBG1]		= 0,
-+	[AR71XX_CLK_SRC_PLLA]		= 0,
-+	[AR71XX_CLK_SRC_PLLC]		= 0,
-+	[AR71XX_CLK_SRC_PLLD]		= 500000000,
-+	[AR71XX_CLK_SRC_HDMI]		= 0,
++enum {
++	AR71XX_CLK_SRC_CPU = 0,
++	AR71XX_CLK_SRC_OSC,
++};
++
++
++static const unsigned int ar71xx_clk_freq[AR71XX_CLK_SRC_OSC+1] = {
++	[AR71XX_CLK_SRC_CPU]		= 400000000,
++	[AR71XX_CLK_SRC_OSC]		= 176000000,
 +};
 +
 +/* GPIO function registers */
-+#define AR71XX_GPIO_FUNCTION			0x18040028
++#define AR71XX_GPIO_FUNCTION			0x00
 +#define AR71XX_GPIO_FUNCTION_SPDIF2TCK		BIT(31)
 +#define AR71XX_GPIO_FUNCTION_SPDIF_EN		BIT(30)
 +#define AR71XX_GPIO_FUNCTION_I2SO_22_18_EN	BIT(29)
@@ -130,7 +117,6 @@
 +#define AR71XX_GPIO_FUNCTION_I2SO_EN		BIT(26)
 +
 +/* I2S registers */
-+#define AR71XX_I2S_BASE				0x180B0000
 +#define AR71XX_I2S_STEREO0_CONFIG		0x00
 +#define AR71XX_I2S_STEREO0_VOLUME		0x04
 +#define AR71XX_I2S_STEREO0_TX_SAMPLE_CNT_LSB	0x0C
@@ -150,13 +136,13 @@
 +#define AR71XX_I2S_I2S_DELAY			BIT(18)
 +#define AR71XX_I2S_PCM_SWAP			BIT(17)
 +#define AR71XX_I2S_MIC_WORD_SIZE		BIT(16)
-+#define AR71XX_I2S_SETERO_MONO 			//15:14
-+#define AR71XX_I2S_DATA_WORD_SIZE		//13:12
++#define AR71XX_I2S_SETERO_MONO(v)		(((v) & 0x3) << 14)
++#define AR71XX_I2S_DATA_WORD_SIZE(v)		(((v) & 0x3) << 12)
 +#define AR71XX_I2S_I2S_WORD_SIZE		BIT(11)
 +#define AR71XX_I2S_MCK_SEL			BIT(10)
 +#define AR71XX_I2S_SAMPLE_CNT_CLEAR_TYPE	BIT(9)
 +#define AR71XX_I2S_MASTER			BIT(8)
-+#define AR71XX_I2S_POSEDGE			//7:0
++#define AR71XX_I2S_POSEDGE(v)			((v) & 0x7f)
 +
 +/* STEREO0_VOLUME masks */
 +#define AR71XX_I2S_CHANNEL1(v)			((v) << 8)
@@ -257,6 +243,8 @@
 +	unsigned int				bclk_ratio;
 +
 +	struct regmap *i2s_regmap;
++	struct regmap *gpio_regmap;
++	struct regmap *mbox_regmap;
 +};
 +
 +#if 0
@@ -269,6 +257,7 @@
 +
 +static void ar71xx_i2s_start_clock(struct ar71xx_i2s_dev *dev)
 +{
++#if  0
 +	/* Start the clock if in master mode */
 +	unsigned int master = dev->fmt & SND_SOC_DAIFMT_MASTER_MASK;
 +
@@ -276,22 +265,23 @@
 +	switch (master) {
 +	case SND_SOC_DAIFMT_CBS_CFS:
 +	case SND_SOC_DAIFMT_CBS_CFM:
-+		regmap_update_bits(dev->clk_regmap, AR71XX_I2S_STEREO0_CONFIG,
-+			AR71XX_I2S_ENAB, AR71XX_I2S_ENAB);
++		regmap_update_bits(dev->i2s_regmap, AR71XX_I2S_STEREO0_CONFIG,
++			AR71XX_I2S_ENABLE, AR71XX_I2S_ENABLE);
 +		break;
 +	default:
 +		break;
 +	}
++#endif
 +}
 +
 +static void ar71xx_i2s_stop_clock(struct ar71xx_i2s_dev *dev)
 +{
-+	uint32_t clkreg;
-+	int timeout = 1000;
++//	uint32_t clkreg;
++//	int timeout = 1000;
 +
 +	/* Stop clock */
-+	regmap_update_bits(dev->clk_regmap, AR71XX_I2S_STEREO0_CONFIG,
-+			AR71XX_I2S_ENAB, 0x00);
++//	regmap_update_bits(dev->i2s_regmap, AR71XX_I2S_STEREO0_CONFIG,
++//			AR71XX_I2S_ENABLE, 0x00);
 +
 +// AR9331 doesn't provide BUSY and KILL Flags
 +#if 0
@@ -315,6 +305,13 @@
 +static void ar71xx_i2s_clear_fifos(struct ar71xx_i2s_dev *dev,
 +				    bool tx, bool rx)
 +{
++#if 0
++	/* Reset Buffers */
++	regmap_update_bits(dev->i2s_regmap, AR71XX_I2S_STEREO0_CONFIG,
++		AR71XX_I2S_MIC_RESET | AR71XX_I2S_RESET,
++		AR71XX_I2S_MIC_RESET | AR71XX_I2S_RESET);
++	
++
 +	int timeout = 1000;
 +	uint32_t syncval;
 +	uint32_t csreg;
@@ -382,8 +379,10 @@
 +	/* Restore I2S state */
 +	regmap_update_bits(dev->i2s_regmap, AR71XX_I2S_CS_A_REG,
 +			AR71XX_I2S_RXON | AR71XX_I2S_TXON, i2s_active_state);
++#endif
 +}
 +
++#if 0
 +static int ar71xx_i2s_set_dai_fmt(struct snd_soc_dai *dai,
 +				      unsigned int fmt)
 +{
@@ -400,68 +399,30 @@
 +	return 0;
 +}
 +
-+#if 0
-+static void ar71xx_i2s_setup_gpio(void)
++static void ar71xx_i2s_setup_gpio(struct ar71xx_i2s_dev *dev)
 +{
-+//TODO ar9331 needs gpio setup???
-+
-+
-+	/*
-+	 * This is the common way to handle the GPIO pins for
-+	 * the Raspberry Pi.
-+	 * TODO Better way would be to handle
-+	 * this in the device tree!
-+	 */
-+#define INP_GPIO(g) *(gpio+((g)/10)) &= ~(7<<(((g)%10)*3))
-+#define SET_GPIO_ALT(g,a) *(gpio+(((g)/10))) |= (((a)<=3?(a)+4:(a)==4?3:2)<<(((g)%10)*3))
-+
-+	unsigned int *gpio;
-+	int pin,pinconfig,startpin,alt;
-+
-+	gpio = ioremap(GPIO_BASE, SZ_16K);
-+
-+	/* SPI is on different GPIOs on different boards */
-+        /* for Raspberry Pi B+, this is pin GPIO18-21, for original on 28-31 */
-+	if (ar71xx_i2s_gpio==AR71XX_I2S_GPIO_AUTO) {	
-+		if ((system_rev & 0xffffff) >= 0x10) {
-+			/* Model B+ */
-+			pinconfig=AR71XX_I2S_GPIO_PIN18;
-+		} else {
-+			/* original */
-+			pinconfig=AR71XX_I2S_GPIO_PIN28;
-+		}
-+	} else {
-+		pinconfig=ar71xx_i2s_gpio;
-+	}
-+
-+	if (pinconfig==AR71XX_I2S_GPIO_PIN18) {
-+		startpin=18;
-+		alt=AR71XX_I2S_GPIO_PIN18_ALT;
-+	} else if (pinconfig==AR71XX_I2S_GPIO_PIN28) {
-+		startpin=28;
-+		alt=AR71XX_I2S_GPIO_PIN28_ALT;
-+	} else {
-+		printk(KERN_INFO "Can't configure I2S GPIOs, unknown pin mode for I2S: %i\n",pinconfig);
-+		return;
-+	}	
-+
-+	/* configure I2S pins to correct ALT mode */
-+	for (pin = startpin; pin <= startpin+3; pin++) {
-+                INP_GPIO(pin);		/* set mode to GPIO input first */
-+                SET_GPIO_ALT(pin, alt);	/* set mode to ALT  */
-+	}
-+	
-+#undef INP_GPIO
-+#undef SET_GPIO_ALT
++	regmap_update_bits(dev->gpio_regmap, 
++		AR71XX_GPIO_FUNCTION,
++		AR71XX_GPIO_FUNCTION_I2SO_22_18_EN |
++			AR71XX_GPIO_FUNCTION_I2S_MCKEN |
++			AR71XX_GPIO_FUNCTION_I2SO_EN,
++		AR71XX_GPIO_FUNCTION_I2SO_22_18_EN |
++			AR71XX_GPIO_FUNCTION_I2S_MCKEN |
++			AR71XX_GPIO_FUNCTION_I2SO_EN);
 +}
-+
 +#endif
++
 +
 +static int ar71xx_i2s_hw_params(struct snd_pcm_substream *substream,
 +				 struct snd_pcm_hw_params *params,
 +				 struct snd_soc_dai *dai)
 +{
 +	struct ar71xx_i2s_dev *dev = snd_soc_dai_get_drvdata(dai);
++	//TODO
++
++
++	return 0;
++#if 0
 +
 +	unsigned int sampling_rate = params_rate(params);
 +	unsigned int data_length, data_delay, bclk_ratio;
@@ -518,6 +479,7 @@
 +	if (dev->bclk_ratio)
 +		bclk_ratio = dev->bclk_ratio;
 +
++#endif
 +	/*
 +	 * Clock Settings
 +	 *
@@ -544,6 +506,7 @@
 +	//     look for new bugs
 +
 +	//XXX 
++#if 0
 +	/* every frame needs to be 32 bit long */
 +	bclk_ratio = 64;
 +
@@ -744,8 +707,8 @@
 +
 +	/* Clear FIFOs */
 +	ar71xx_i2s_clear_fifos(dev, true, true);
++#endif
 +
-+	return 0;
 +}
 +
 +static int ar71xx_i2s_prepare(struct snd_pcm_substream *substream,
@@ -753,7 +716,10 @@
 +{
 +	struct ar71xx_i2s_dev *dev = snd_soc_dai_get_drvdata(dai);
 +	uint32_t cs_reg;
++	
++	return 0;
 +
++#if 0
 +	ar71xx_i2s_start_clock(dev);
 +
 +	/*
@@ -772,6 +738,7 @@
 +		ar71xx_i2s_clear_fifos(dev, false, true);
 +
 +	return 0;
++#endif
 +}
 +
 +static void ar71xx_i2s_stop(struct ar71xx_i2s_dev *dev,
@@ -780,6 +747,7 @@
 +{
 +	uint32_t mask;
 +
++#if 0
 +	if (substream->stream == SNDRV_PCM_STREAM_CAPTURE)
 +		mask = AR71XX_I2S_RXON;
 +	else
@@ -791,8 +759,10 @@
 +	/* Stop also the clock when not SND_SOC_DAIFMT_CONT */
 +	if (!dai->active && !(dev->fmt & SND_SOC_DAIFMT_CONT))
 +		ar71xx_i2s_stop_clock(dev);
++#endif
 +}
 +
++#if 0
 +static int ar71xx_i2s_trigger(struct snd_pcm_substream *substream, int cmd,
 +			       struct snd_soc_dai *dai)
 +{
@@ -875,6 +845,9 @@
 +	 */
 +	ar71xx_i2s_stop_clock(dev);
 +}
++#endif
++
++#if 0
 +
 +static const struct snd_soc_dai_ops ar71xx_i2s_dai_ops = {
 +	.startup	= ar71xx_i2s_startup,
@@ -972,6 +945,8 @@
 +	},
 +};
 +
++#endif
++
 +static const struct snd_soc_component_driver ar71xx_i2s_component = {
 +	.name		= "ar71xx-i2s-comp",
 +};
@@ -1001,11 +976,17 @@
 +	struct ar71xx_i2s_dev *dev;
 +	int i;
 +	int ret;
-+	struct regmap *regmap[2];
-+	struct resource *mem[2];
++	struct regmap *regmap[3];
++	struct resource *mem[3];
++
++
++	printk("i am probe\n");
++	
++	return 0;
++#if 0
 +
 +	/* Request both ioareas */
-+	for (i = 0; i <= 1; i++) {
++	for (i = 0; i < 3; i++) {
 +		void __iomem *base;
 +
 +		mem[i] = platform_get_resource(pdev, IORESOURCE_MEM, i);
@@ -1028,6 +1009,7 @@
 +
 +	dev->i2s_regmap = regmap[0];
 +	dev->clk_regmap = regmap[1];
++	dev->mbox_regmap = regmap[2];
 +
 +	/* Set the DMA address */
 +	dev->dma_data[SNDRV_PCM_STREAM_PLAYBACK].addr =
@@ -1078,12 +1060,13 @@
 +	}
 +
 +	return 0;
++#endif
 +}
 +
 +static int ar71xx_i2s_remove(struct platform_device *pdev)
 +{
-+	snd_dmaengine_pcm_unregister(&pdev->dev);
-+	snd_soc_unregister_component(&pdev->dev);
++	//snd_dmaengine_pcm_unregister(&pdev->dev);
++	//snd_soc_unregister_component(&pdev->dev);
 +	return 0;
 +}
 +
@@ -1122,48 +1105,6 @@
  obj-$(CONFIG_SND_SOC)	+= atmel/
  obj-$(CONFIG_SND_SOC)	+= au1x/
  obj-$(CONFIG_SND_SOC)	+= blackfin/
---- /dev/null
-+++ b/arch/mips/boot/dts/Makefile
-@@ -0,0 +1,11 @@
-+dtb-$(CONFIG_AR71XX_CARAMBOLA2)		+= ar71xx_carambola2.dtb
-+
-+
-+obj-y		+= $(patsubst %.dtb, %dtb.o, $(dtb-y))
-+
-+targets		+= dtbs
-+targets		+= $(dtb-y)
-+
-+dtbs: $(addprefix $(obj)/, $(dtb-y))
-+
-+clean-files:	+= *.dtb *.dtb.S
---- /dev/null
-+++ b/arch/mips/boot/dts/ar71xx_carambola2.dts
-@@ -0,0 +1,25 @@
-+/dts-v1/;
-+
-+/ {
-+	compatible = "8devices,carambola2";
-+
-+	cpu {
-+		compatible = "mips,ar71xx";
-+	};
-+
-+	soc {
-+		#adress-cells  = <1>;
-+		#size-cells = <1>;
-+
-+		i2s@180B0000 {
-+			compatible = "mips,ar71xx";
-+			reg = <0x180B0000 0x20>;
-+		};
-+
-+		gpio@18040000 {
-+			compatible = "mips,ar71xx";
-+			reg = <0x18040000 0x20>;
-+		};
-+	};
-+};
-+
 --- a/include/sound/soc-dai.h
 +++ b/include/sound/soc-dai.h
 @@ -105,6 +105,8 @@ int snd_soc_dai_set_clkdiv(struct snd_so
@@ -1248,3 +1189,124 @@
   * snd_soc_dai_set_clkdiv - configure DAI clock dividers.
   * @dai: DAI
   * @div_id: DAI specific clock divider ID
+--- /dev/null
++++ b/arch/mips/ath79/dev-i2s.c
+@@ -0,0 +1,23 @@
++/*
++ *  Atheros AR9331 I2S Audio support
++ *
++ *  Copyright (C) 2014 Felix Kramer <felixkramerroki@aol.com>
++ *
++ *  This program is free software; you can redistribute it and/or modify it
++ *  under the terms of the GNU General Public License version 2 as published
++ *  by the Free Software Foundation.
++ */
++
++#include "dev-i2s.h"
++
++int __init ath79_register_i2s(struct platform_device *pdev)
++{
++	int ret;
++
++	ret = platform_device_register(pdev);
++	if (ret)
++		pr_debug("Unable to register platform devices '%s' %d\n",
++		         pdev->name, ret);
++
++	return ret;
++}
+--- /dev/null
++++ b/arch/mips/ath79/dev-i2s.h
+@@ -0,0 +1,21 @@
++/*
++ *  Atheros AR9331 I2S Audio support
++ *
++ *  Copyright (C) 2014 Felix Kramer <felixkramerroki@aol.com>
++ *
++ *  This program is free software; you can redistribute it and/or modify it
++ *  under the terms of the GNU General Public License version 2 as published
++ *  by the Free Software Foundation.
++ */
++
++#ifndef _ATH79_DEV_I2S_H
++#define _ATH79_DEV_I2S_H
++
++#include <linux/input.h>
++#include <linux/platform_device.h>
++
++
++int __init ath79_register_i2s(struct platform_device *pdev);
++
++
++#endif /* _ATH79_DEV_I2S_H */
+--- a/arch/mips/ath79/mach-carambola2.c
++++ b/arch/mips/ath79/mach-carambola2.c
+@@ -18,6 +18,7 @@
+ #include "dev-spi.h"
+ #include "dev-usb.h"
+ #include "dev-wmac.h"
++#include "dev-i2s.h"
+ #include "machtypes.h"
+ 
+ #define CARAMBOLA2_GPIO_LED_WLAN		0
+@@ -61,6 +62,35 @@ static struct gpio_keys_button carambola
+ 	},
+ };
+ 
++#ifdef CONFIG_SND_SOC_AR71XX_I2S_MODULE
++static struct resource ar9331_i2s_resources[] = {
++	{
++		.start	= AR933X_I2S_BASE,
++		.end	= AR933X_I2S_BASE + AR933X_I2S_SIZE,
++		.flags	= IORESOURCE_MEM,
++		.name	= "i2s-registers"
++	},
++	{
++		.start	= AR933X_MBOX_BASE,
++		.end	= AR933X_MBOX_BASE + AR933X_MBOX_SIZE,
++		.flags	= IORESOURCE_MEM,
++		.name	= "mbox-registers"
++	}
++	{
++		.start	= AR71XX_GPIO_BASE,
++		.end	= AR71XX_GPIO_BASE + AR71XX_GPIO_SIZE,
++		.flags	= IORESOURCE_MEM,
++		.name	= "gpio-registers"
++	}
++};
++
++static struct platform_device ar9331_i2s_device = {
++	.name		= "ar71xx-i2s",
++	.resource	= ar9331_i2s_resources,
++	.num_resources	= ARRAY_SIZE(ar9331_i2s_resources),
++};
++#endif
++
+ static void __init carambola2_common_setup(void)
+ {
+ 	u8 *art = (u8 *) KSEG1ADDR(0x1fff0000);
+@@ -81,6 +111,11 @@ static void __init carambola2_common_set
+ 
+ 	/* WAN port */
+ 	ath79_register_eth(0);
++
++#ifdef CONFIG_SND_SOC_AR71XX_I2S_MODULE
++	/* I2S module */
++	ath79_register_i2s(&ar9331_i2s_device);
++#endif
+ }
+ 
+ static void __init carambola2_setup(void)
+--- a/arch/mips/include/asm/mach-ath79/ar71xx_regs.h
++++ b/arch/mips/include/asm/mach-ath79/ar71xx_regs.h
+@@ -94,6 +94,10 @@
+ #define AR933X_WMAC_SIZE	0x20000
+ #define AR933X_EHCI_BASE	0x1b000000
+ #define AR933X_EHCI_SIZE	0x1000
++#define AR933X_I2S_BASE		(AR71XX_APB_BASE + 0x000B0000)
++#define AR933X_I2S_SIZE		0x20
++#define AR933X_MBOX_BASE	(AR71XX_APB_BASE + 0x000A0000)
++#define AR933X_MBOX_SIZE	0x58
+ 
+ #define AR934X_GMAC_BASE	(AR71XX_APB_BASE + 0x00070000)
+ #define AR934X_GMAC_SIZE	0x14
