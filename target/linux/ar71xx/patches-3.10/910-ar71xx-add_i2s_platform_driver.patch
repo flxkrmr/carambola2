@@ -1,21 +1,33 @@
 --- /dev/null
 +++ b/sound/soc/ar71xx/Kconfig
-@@ -0,0 +1,5 @@
+@@ -0,0 +1,12 @@
 +config SND_SOC_AR71XX_I2S
 +	tristate "SoC Audio support for the AR71XX I2S Module"
 +	#select REGMAP_MMIO
 +	help
 +	  Say Y or M...
++
++config SND_SOC_AR71XX_HIFIBERRY_DAC
++	tristate "Hifiberry DAC Machine Driver"
++	depends on SND_SOC_AR71XX_I2S
++	select SND_SOC_PCM5102A
++	help
++	  Say Y or M...
 --- /dev/null
 +++ b/sound/soc/ar71xx/Makefile
-@@ -0,0 +1,4 @@
+@@ -0,0 +1,9 @@
 +# AR71XX Platform Support
 +snd-soc-ar71xx-i2s-objs := ar71xx-i2s.o
 +
 +obj-$(CONFIG_SND_SOC_AR71XX_I2S) += snd-soc-ar71xx-i2s.o
++
++# AR71XX Machine Support
++snd-soc-hifiberry-dac-objs := hifiberry_dac.o
++
++obj-$(CONFIG_SND_SOC_AR71XX_HIFIBERRY_DAC) += snd-soc-ar71xx-hifiberry-dac.o
 --- /dev/null
 +++ b/sound/soc/ar71xx/ar71xx-i2s.c
-@@ -0,0 +1,1069 @@
+@@ -0,0 +1,1113 @@
 +/*
 + * ALSA SoC I2S Audio Layer for Broadcom AR71XX SoC
 + *
@@ -156,6 +168,29 @@
 +#define AR71XX_I2S_DIV_INT(v)			((v) << 16)
 +#define AR71XX_I2S_DIV_FRAC(v)			(v)
 +
++/* MBOX Registers */
++#define AR71XX_MBOX_FIFO_STATUS			0x08
++#define AR71XX_SLIC_MBOX_FIFO_STATUS		0x0c
++#define AR71XX_MBOX_DMA_POLICY			0x10
++#define AR71XX_SLIC_MBOX_DMA_POLICY		0x14
++#define AR71XX_MBOX_DMA_RX_DECRIPTOR_BASE	0x18
++#define AR71XX_MBOX_DMA_RX_CONTROL		0x1c
++#define AR71XX_MBOX_DMA_TX_DECRIPTOR_BASE	0x20
++#define AR71XX_MBOX_DMA_TX_CONTROL		0x24
++#define AR71XX_SLIC_MBOX_DMA_RX_DECRIPTOR_BASE	0x28
++#define AR71XX_SLIC_MBOX_DMA_RX_CONTROL		0x2c
++#define AR71XX_SLIC_MBOX_DMA_TX_DECRIPTOR_BASE	0x30
++#define AR71XX_SLIC_MBOX_DMA_TX_CONTROL		0x34
++#define AR71XX_MBOX_FRAME			0x38
++#define AR71XX_SLIC_MBOX_FRAME			0x3c
++#define AR71XX_FIFO_TIMEOUT			0x40
++#define AR71XX_MBOX_INT_STATUS			0x44
++#define AR71XX_SLIC_MBOX_INT_STATUS		0x48
++#define AR71XX_MBOX_INT_ENABLE			0x4c
++#define AR71XX_SLIC_MBOX_INT_ENABLE		0x50
++#define AR71XX_MBOX_FIFO_RESET			0x58
++#define AR71XX_SLIC_MBOX_FIFO_RESET		0x5c
++
 +
 +
 +#if 0
@@ -229,6 +264,16 @@
 +#define AR71XX_DMA_DREQ_PCM_RX		3
 +
 +#endif
++
++/* I2S DMA interface */
++//MAC Rx High/Low Priority Queue RXDP Pointer
++#define AR71XX_I2S_RX_HP_QUEUE_POINTER	0x18100074
++#define AR71XX_I2S_RX_LP_QUEUE_POINTER	0x18100078
++//QCU Tx Queue Descriptor
++#define AR71XX_I2S_Q_TXDP(v)		(0x18100800 + (v << 2))
++
++#define AR71XX_DMA_DREQ_PCM_TX		2
++#define AR71XX_DMA_DREQ_PCM_RX		3
 +
 +#if 0
 +/* I2S pin configuration */
@@ -382,7 +427,6 @@
 +#endif
 +}
 +
-+#if 0
 +static int ar71xx_i2s_set_dai_fmt(struct snd_soc_dai *dai,
 +				      unsigned int fmt)
 +{
@@ -399,6 +443,7 @@
 +	return 0;
 +}
 +
++#if 0
 +static void ar71xx_i2s_setup_gpio(struct ar71xx_i2s_dev *dev)
 +{
 +	regmap_update_bits(dev->gpio_regmap, 
@@ -858,6 +903,7 @@
 +	.set_fmt	= ar71xx_i2s_set_dai_fmt,
 +	.set_bclk_ratio	= ar71xx_i2s_set_dai_bclk_ratio
 +};
++#endif
 +
 +static int ar71xx_i2s_dai_probe(struct snd_soc_dai *dai)
 +{
@@ -877,7 +923,7 @@
 +		.channels_max = 2,
 +		.rates =	SNDRV_PCM_RATE_8000_192000,
 +		.formats =	SNDRV_PCM_FMTBIT_S16_LE
-+				// | SNDRV_PCM_FMTBIT_S24_LE : disable for now, it causes white noise with xbmc
++				| SNDRV_PCM_FMTBIT_S24_LE
 +				| SNDRV_PCM_FMTBIT_S32_LE
 +		},
 +	.capture = {
@@ -891,6 +937,8 @@
 +	.ops = &ar71xx_i2s_dai_ops,
 +	.symmetric_rates = 1
 +};
++
++#if 0
 +
 +static bool ar71xx_i2s_volatile_reg(struct device *dev, unsigned int reg)
 +{
@@ -925,27 +973,36 @@
 +	};
 +}
 +
++#endif
++
 +static const struct regmap_config ar71xx_regmap_config[] = {
 +	{
 +		.reg_bits = 32,
 +		.reg_stride = 4,
 +		.val_bits = 32,
-+		.max_register = AR71XX_I2S_GRAY_REG,
-+		.precious_reg = ar71xx_i2s_precious_reg,
-+		.volatile_reg = ar71xx_i2s_volatile_reg,
++		.max_register = AR71XX_I2S_STEREO0_CLK_DIV,
++		//.precious_reg = ar71xx_i2s_precious_reg,
++		//.volatile_reg = ar71xx_i2s_volatile_reg,
 +		.cache_type = REGCACHE_RBTREE,
 +	},
 +	{
 +		.reg_bits = 32,
 +		.reg_stride = 4,
 +		.val_bits = 32,
-+		.max_register = AR71XX_CLK_PCMDIV_REG,
-+		.volatile_reg = ar71xx_clk_volatile_reg,
++		.max_register = AR71XX_SLIC_MBOX_FIFO_RESET,
++		//.volatile_reg = ar71xx_clk_volatile_reg,
++		.cache_type = REGCACHE_RBTREE,
++	},
++	{
++		.reg_bits = 32,
++		.reg_stride = 4,
++		.val_bits = 32,
++		.max_register = AR71XX_GPIO_FUNCTION,
 +		.cache_type = REGCACHE_RBTREE,
 +	},
 +};
 +
-+#endif
++
 +
 +static const struct snd_soc_component_driver ar71xx_i2s_component = {
 +	.name		= "ar71xx-i2s-comp",
@@ -980,12 +1037,10 @@
 +	struct resource *mem[3];
 +
 +
-+	printk("i am probe\n");
++	printk("started probe\n");
 +	
-+	return 0;
-+#if 0
 +
-+	/* Request both ioareas */
++	/* Request ioareas */
 +	for (i = 0; i < 3; i++) {
 +		void __iomem *base;
 +
@@ -1008,15 +1063,17 @@
 +		return PTR_ERR(dev);
 +
 +	dev->i2s_regmap = regmap[0];
-+	dev->clk_regmap = regmap[1];
-+	dev->mbox_regmap = regmap[2];
++	dev->mbox_regmap = regmap[1];
++	dev->gpio_regmap = regmap[2];
 +
++#if 0
 +	/* Set the DMA address */
 +	dev->dma_data[SNDRV_PCM_STREAM_PLAYBACK].addr =
 +		(dma_addr_t)AR71XX_I2S_FIFO_PHYSICAL_ADDR;
 +
 +	dev->dma_data[SNDRV_PCM_STREAM_CAPTURE].addr =
 +		(dma_addr_t)AR71XX_I2S_FIFO_PHYSICAL_ADDR;
++#endif
 +
 +	/* Set the DREQ */
 +	dev->dma_data[SNDRV_PCM_STREAM_PLAYBACK].slave_id =
@@ -1060,13 +1117,12 @@
 +	}
 +
 +	return 0;
-+#endif
 +}
 +
 +static int ar71xx_i2s_remove(struct platform_device *pdev)
 +{
-+	//snd_dmaengine_pcm_unregister(&pdev->dev);
-+	//snd_soc_unregister_component(&pdev->dev);
++	snd_dmaengine_pcm_unregister(&pdev->dev);
++	snd_soc_unregister_component(&pdev->dev);
 +	return 0;
 +}
 +
@@ -1266,7 +1322,7 @@
 +		.end	= AR933X_MBOX_BASE + AR933X_MBOX_SIZE,
 +		.flags	= IORESOURCE_MEM,
 +		.name	= "mbox-registers"
-+	}
++	},
 +	{
 +		.start	= AR71XX_GPIO_BASE,
 +		.end	= AR71XX_GPIO_BASE + AR71XX_GPIO_SIZE,
@@ -1310,3 +1366,257 @@
  
  #define AR934X_GMAC_BASE	(AR71XX_APB_BASE + 0x00070000)
  #define AR934X_GMAC_SIZE	0x14
+--- a/arch/mips/ath79/Kconfig
++++ b/arch/mips/ath79/Kconfig
+@@ -1014,6 +1014,7 @@ config ATH79_MACH_CARAMBOLA2
+ 	select ATH79_DEV_M25P80
+ 	select ATH79_DEV_USB
+ 	select ATH79_DEV_WMAC
++	select ATH79_DEV_I2S
+ 
+ config ATH79_MACH_BHU_BXU2000N2_A
+ 	bool "BHU BXU2000n-2 rev. A support"
+@@ -1100,6 +1101,9 @@ config ATH79_DEV_SPI
+ config ATH79_DEV_USB
+ 	def_bool n
+ 
++config ATH79_DEV_I2S
++	def_bool n
++
+ config ATH79_DEV_WMAC
+ 	depends on (SOC_AR913X || SOC_AR933X || SOC_AR934X || SOC_QCA953X || SOC_QCA955X)
+ 	def_bool n
+--- a/arch/mips/ath79/Makefile
++++ b/arch/mips/ath79/Makefile
+@@ -27,6 +27,7 @@ obj-$(CONFIG_ATH79_DEV_NFC)		+= dev-nfc.
+ obj-$(CONFIG_ATH79_DEV_SPI)		+= dev-spi.o
+ obj-$(CONFIG_ATH79_DEV_USB)		+= dev-usb.o
+ obj-$(CONFIG_ATH79_DEV_WMAC)		+= dev-wmac.o
++obj-$(CONFIG_ATH79_DEV_I2S)		+= dev-i2s.o
+ 
+ #
+ # Miscellaneous objects
+--- /dev/null
++++ b/sound/soc/ar71xx/hifiberry_dac.c
+@@ -0,0 +1,107 @@
++/*
++ * ASoC Driver for HifiBerry DAC
++ *
++ * Author:	Florian Meier <florian.meier@koalo.de>
++ *		Copyright 2013
++ *
++ * TODO:
++ * - CPU DAI Name
++ * - Platform Name
++ *
++ *
++ *
++ * This program is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU General Public License
++ * version 2 as published by the Free Software Foundation.
++ *
++ * This program is distributed in the hope that it will be useful, but
++ * WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++ * General Public License for more details.
++ */
++
++#include <linux/module.h>
++#include <linux/platform_device.h>
++
++#include <sound/core.h>
++#include <sound/pcm.h>
++#include <sound/pcm_params.h>
++#include <sound/soc.h>
++#include <sound/jack.h>
++
++static int snd_rpi_hifiberry_dac_init(struct snd_soc_pcm_runtime *rtd)
++{
++	printk("++++++++++initialized hifiberry dac+++++++++++\n");
++	return 0;
++}
++
++static int snd_rpi_hifiberry_dac_hw_params(struct snd_pcm_substream *substream,
++				       struct snd_pcm_hw_params *params)
++{
++	struct snd_soc_pcm_runtime *rtd = substream->private_data;
++	struct snd_soc_dai *cpu_dai = rtd->cpu_dai;
++
++	unsigned int sample_bits =
++		snd_pcm_format_physical_width(params_format(params));
++
++	return snd_soc_dai_set_bclk_ratio(cpu_dai, sample_bits * 2);
++}
++
++/* machine stream operations */
++static struct snd_soc_ops snd_rpi_hifiberry_dac_ops = {
++	.hw_params = snd_rpi_hifiberry_dac_hw_params,
++};
++
++static struct snd_soc_dai_link snd_rpi_hifiberry_dac_dai[] = {
++{
++	.name		= "HifiBerry DAC",
++	.stream_name	= "HifiBerry DAC HiFi",
++	.cpu_dai_name	= "bcm2708-i2s.0",
++	.codec_dai_name	= "pcm5102a-hifi",
++	.platform_name	= "bcm2708-i2s.0",
++	.codec_name	= "pcm5102a-codec",
++	.dai_fmt	= SND_SOC_DAIFMT_I2S | SND_SOC_DAIFMT_NB_NF |
++				SND_SOC_DAIFMT_CBS_CFS,
++	.ops		= &snd_rpi_hifiberry_dac_ops,
++	.init		= snd_rpi_hifiberry_dac_init,
++},
++};
++
++/* audio machine driver */
++static struct snd_soc_card snd_rpi_hifiberry_dac = {
++	.name         = "snd_rpi_hifiberry_dac",
++	.dai_link     = snd_rpi_hifiberry_dac_dai,
++	.num_links    = ARRAY_SIZE(snd_rpi_hifiberry_dac_dai),
++};
++
++static int snd_rpi_hifiberry_dac_probe(struct platform_device *pdev)
++{
++	int ret = 0;
++
++	snd_rpi_hifiberry_dac.dev = &pdev->dev;
++	ret = snd_soc_register_card(&snd_rpi_hifiberry_dac);
++	if (ret)
++		dev_err(&pdev->dev, "snd_soc_register_card() failed: %d\n", ret);
++
++	return ret;
++}
++
++static int snd_rpi_hifiberry_dac_remove(struct platform_device *pdev)
++{
++	return snd_soc_unregister_card(&snd_rpi_hifiberry_dac);
++}
++
++static struct platform_driver snd_rpi_hifiberry_dac_driver = {
++        .driver = {
++                .name   = "snd-hifiberry-dac",
++                .owner  = THIS_MODULE,
++        },
++        .probe          = snd_rpi_hifiberry_dac_probe,
++        .remove         = snd_rpi_hifiberry_dac_remove,
++};
++
++module_platform_driver(snd_rpi_hifiberry_dac_driver);
++
++MODULE_AUTHOR("Florian Meier <florian.meier@koalo.de>");
++MODULE_DESCRIPTION("ASoC Driver for HifiBerry DAC");
++MODULE_LICENSE("GPL v2");
+--- a/sound/soc/codecs/Kconfig
++++ b/sound/soc/codecs/Kconfig
+@@ -55,6 +55,7 @@ config SND_SOC_ALL_CODECS
+ 	select SND_SOC_ML26124 if I2C
+ 	select SND_SOC_OMAP_HDMI_CODEC if OMAP4_DSS_HDMI
+ 	select SND_SOC_PCM3008
++	select SND_SOC_PCM5102A
+ 	select SND_SOC_RT5631 if I2C
+ 	select SND_SOC_SGTL5000 if I2C
+ 	select SND_SOC_SI476X if MFD_SI476X_CORE
+@@ -293,6 +294,9 @@ config SND_SOC_OMAP_HDMI_CODEC
+ config SND_SOC_PCM3008
+        tristate
+ 
++config SND_SOC_PCM5102A
++       tristate
++
+ config SND_SOC_RT5631
+ 	tristate
+ 
+--- a/sound/soc/codecs/Makefile
++++ b/sound/soc/codecs/Makefile
+@@ -43,6 +43,7 @@ snd-soc-mc13783-objs := mc13783.o
+ snd-soc-ml26124-objs := ml26124.o
+ snd-soc-omap-hdmi-codec-objs := omap-hdmi.o
+ snd-soc-pcm3008-objs := pcm3008.o
++snd-soc-pcm5102a-objs := pcm5102a.o
+ snd-soc-rt5631-objs := rt5631.o
+ snd-soc-sgtl5000-objs := sgtl5000.o
+ snd-soc-alc5623-objs := alc5623.o
+@@ -170,6 +171,7 @@ obj-$(CONFIG_SND_SOC_MC13783)	+= snd-soc
+ obj-$(CONFIG_SND_SOC_ML26124)	+= snd-soc-ml26124.o
+ obj-$(CONFIG_SND_SOC_OMAP_HDMI_CODEC) += snd-soc-omap-hdmi-codec.o
+ obj-$(CONFIG_SND_SOC_PCM3008)	+= snd-soc-pcm3008.o
++obj-$(CONFIG_SND_SOC_PCM5102A)	+= snd-soc-pcm5102a.o
+ obj-$(CONFIG_SND_SOC_RT5631)	+= snd-soc-rt5631.o
+ obj-$(CONFIG_SND_SOC_SGTL5000)  += snd-soc-sgtl5000.o
+ obj-$(CONFIG_SND_SOC_SIGMADSP)	+= snd-soc-sigmadsp.o
+--- /dev/null
++++ b/sound/soc/codecs/pcm5102a.c
+@@ -0,0 +1,73 @@
++/*
++ * Driver for the PCM5102A codec
++ *
++ * Author:	Florian Meier <florian.meier@koalo.de>
++ *		Copyright 2013
++ *
++ * This program is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU General Public License
++ * version 2 as published by the Free Software Foundation.
++ *
++ * This program is distributed in the hope that it will be useful, but
++ * WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++ * General Public License for more details.
++ */
++
++
++#include <linux/init.h>
++#include <linux/module.h>
++#include <linux/platform_device.h>
++
++#include <sound/soc.h>
++
++static struct snd_soc_dai_driver pcm5102a_dai = {
++	.name = "pcm5102a-hifi",
++	.playback = {
++		.channels_min = 2,
++		.channels_max = 2,
++		.rates = SNDRV_PCM_RATE_8000_192000,
++		.formats = SNDRV_PCM_FMTBIT_S16_LE |
++			   // SNDRV_PCM_FMTBIT_S24_LE | : disable for now, it causes white noise with xbmc
++			   SNDRV_PCM_FMTBIT_S32_LE
++	},
++	.capture = {
++		.stream_name = "Capture",
++		.channels_min = 1,
++		.channels_max = 2,
++		.rates = SNDRV_PCM_RATE_8000_192000,
++		.formats = SNDRV_PCM_FMTBIT_S16_LE |
++			   SNDRV_PCM_FMTBIT_S24_LE | 
++			   SNDRV_PCM_FMTBIT_S32_LE
++	},
++};
++
++static struct snd_soc_codec_driver soc_codec_dev_pcm5102a;
++
++static int pcm5102a_probe(struct platform_device *pdev)
++{
++	printk("in pcm5102a_probe()\ndoing snd_soc_register_codec() now\n");
++	return snd_soc_register_codec(&pdev->dev, &soc_codec_dev_pcm5102a,
++			&pcm5102a_dai, 1);
++}
++
++static int pcm5102a_remove(struct platform_device *pdev)
++{
++	snd_soc_unregister_codec(&pdev->dev);
++	return 0;
++}
++
++static struct platform_driver pcm5102a_codec_driver = {
++	.probe 		= pcm5102a_probe,
++	.remove 	= pcm5102a_remove,
++	.driver		= {
++		.name	= "pcm5102a-codec",
++		.owner	= THIS_MODULE,
++	},
++};
++
++module_platform_driver(pcm5102a_codec_driver);
++
++MODULE_DESCRIPTION("ASoC PCM5102A codec driver");
++MODULE_AUTHOR("Florian Meier <florian.meier@koalo.de>");
++MODULE_LICENSE("GPL v2");
