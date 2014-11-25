@@ -17,7 +17,8 @@ SOUNDCORE_LOAD ?= \
 	snd-timer \
 	snd-pcm \
 	snd-mixer-oss \
-	snd-pcm-oss
+	snd-pcm-oss \
+	snd-page-alloc
 
 SOUNDCORE_FILES ?= \
 	$(LINUX_DIR)/sound/soundcore.ko \
@@ -28,7 +29,8 @@ SOUNDCORE_FILES ?= \
 	$(LINUX_DIR)/sound/core/snd-timer.ko \
 	$(LINUX_DIR)/sound/core/snd-pcm.ko \
 	$(LINUX_DIR)/sound/core/oss/snd-mixer-oss.ko \
-	$(LINUX_DIR)/sound/core/oss/snd-pcm-oss.ko
+	$(LINUX_DIR)/sound/core/oss/snd-pcm-oss.ko \
+	$(LINUX_DIR)/sound/core/snd-page-alloc.ko
 
 ifeq ($(strip $(call CompareKernelPatchVer,$(KERNEL_PATCHVER),ge,3.3.0)),1)
 SOUNDCORE_LOAD += \
@@ -198,10 +200,28 @@ define KernelPackage/sound-soc-ar71xx-i2s
   TITLE:=I2S Driver Module for AR71XX
   KCONFIG:=CONFIG_SND_SOC_AR71XX_I2S 
   FILES:=$(LINUX_DIR)/sound/soc/ar71xx/snd-soc-ar71xx-i2s.ko
+  DEPENDS:= \
+	+kmod-sound-soc-core \
+	+kmod-regmap
   $(call AddDepends/sound)
 endef
 
 $(eval $(call KernelPackage,sound-soc-ar71xx-i2s))
+
+
+define KernelPackage/sound-soc-ar71xx-hifiberry-dac
+  TITLE:=Hifiberry Codec Driver
+  KCONFIG:=CONFIG_SND_SOC_AR71XX_HIFIBERRY_DAC
+  FILES:= \
+	$(LINUX_DIR)/sound/soc/codecs/snd-soc-pcm5102a.ko \
+	$(LINUX_DIR)/sound/soc/ar71xx/snd-soc-ar71xx-hifiberry-dac.ko
+  DEPENDS:= \
+	+kmod-sound-soc-core \
+	+kmod-sound-soc-ar71xx-i2s 
+  $(call AddDepends/sound)
+endef
+
+$(eval $(call KernelPackage,sound-soc-ar71xx-hifiberry-dac))
 
 
 define KernelPackage/sound-soc-imx

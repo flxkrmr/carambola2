@@ -689,8 +689,9 @@ define KernelPackage/regmap
   FILES:= \
 	$(LINUX_DIR)/drivers/base/regmap/regmap-core.ko \
 	$(LINUX_DIR)/drivers/base/regmap/regmap-i2c.ko \
+	$(LINUX_DIR)/drivers/base/regmap/regmap-mmio.ko \
 	$(if $(CONFIG_SPI),$(LINUX_DIR)/drivers/base/regmap/regmap-spi.ko)
-  AUTOLOAD:=$(call AutoLoad,21,regmap-core regmap-i2c regmap-spi)
+  AUTOLOAD:=$(call AutoLoad,21,regmap-core regmap-i2c regmap-mmio regmap-spi)
 endef
 
 define KernelPackage/regmap/description
@@ -924,3 +925,14 @@ define KernelPackage/thermal-kirkwood/description
 endef
 
 $(eval $(call KernelPackage,thermal-kirkwood))
+
+
+define KernelPackage/snd-soc-clk-test-driver
+  SUBMENU:=$(OTHER_MENU)
+  TITLE:=Test Driver for I2S Clock output
+  KCONFIG:=CONFIG_CLK_TEST_DRIVER
+  FILES:=$(LINUX_DIR)/sound/soc/ar71xx/snd-soc-clk-test-driver.ko
+  AUTOLOAD:=$(call AutoProbe,snd-soc-clk-test-driver)
+endef
+
+$(eval $(call KernelPackage,snd-soc-clk-test-driver))
