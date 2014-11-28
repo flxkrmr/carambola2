@@ -1,9 +1,11 @@
 --- /dev/null
 +++ b/sound/soc/ar71xx/Kconfig
-@@ -0,0 +1,12 @@
+@@ -0,0 +1,14 @@
 +config SND_SOC_AR71XX_I2S
 +	tristate "SoC Audio support for the AR71XX I2S Module"
-+	#select REGMAP_MMIO
++	select REGMAP_MMIO
++	select SND_SOC_DMAENGINE_PCM
++	select SND_SOC_GENERIC_DMAENGINE_PCM
 +	help
 +	  Say Y or M...
 +
@@ -22,12 +24,12 @@
 +obj-$(CONFIG_SND_SOC_AR71XX_I2S) += snd-soc-ar71xx-i2s.o
 +
 +# AR71XX Machine Support
-+snd-soc-hifiberry-dac-objs := hifiberry_dac.o
++snd-soc-ar71xx-hifiberry-dac-objs := hifiberry_dac.o
 +
 +obj-$(CONFIG_SND_SOC_AR71XX_HIFIBERRY_DAC) += snd-soc-ar71xx-hifiberry-dac.o
 --- /dev/null
 +++ b/sound/soc/ar71xx/ar71xx-i2s.c
-@@ -0,0 +1,1113 @@
+@@ -0,0 +1,998 @@
 +/*
 + * ALSA SoC I2S Audio Layer for Broadcom AR71XX SoC
 + *
@@ -120,8 +122,16 @@
 +	[AR71XX_CLK_SRC_OSC]		= 176000000,
 +};
 +
++/* GPIOs for Regmap testing */
++#define AR71XX_GPIO_OE			0x00
++#define AR71XX_GPIO_SET			0x0c
++#define AR71XX_GPIO_CLEAR		0x10
++
++#define AR71XX_GPIO_PIN(v)		(1 << (v))
++
++
 +/* GPIO function registers */
-+#define AR71XX_GPIO_FUNCTION			0x00
++#define AR71XX_GPIO_FUNCTION			0x28
 +#define AR71XX_GPIO_FUNCTION_SPDIF2TCK		BIT(31)
 +#define AR71XX_GPIO_FUNCTION_SPDIF_EN		BIT(30)
 +#define AR71XX_GPIO_FUNCTION_I2SO_22_18_EN	BIT(29)
@@ -149,12 +159,26 @@
 +#define AR71XX_I2S_PCM_SWAP			BIT(17)
 +#define AR71XX_I2S_MIC_WORD_SIZE		BIT(16)
 +#define AR71XX_I2S_SETERO_MONO(v)		(((v) & 0x3) << 14)
++enum {
++	AR71XX_I2S_STEREO = 0,
++	AR71XX_I2S_MONO_CHNL0,
++	AR71XX_I2S_MONO_CHNL1,
++};
++
 +#define AR71XX_I2S_DATA_WORD_SIZE(v)		(((v) & 0x3) << 12)
++enum {
++	AR71XX_I2S_DATA_WORD_8 = 0,
++	AR71XX_I2S_DATA_WORD_16,
++	AR71XX_I2S_DATA_WORD_24,
++	AR71XX_I2S_DATA_WORD_32,
++};
++
 +#define AR71XX_I2S_I2S_WORD_SIZE		BIT(11)
 +#define AR71XX_I2S_MCK_SEL			BIT(10)
 +#define AR71XX_I2S_SAMPLE_CNT_CLEAR_TYPE	BIT(9)
 +#define AR71XX_I2S_MASTER			BIT(8)
 +#define AR71XX_I2S_POSEDGE(v)			((v) & 0x7f)
++#define AR71XX_I2S_POSEDGE_MASK			0x7f
 +
 +/* STEREO0_VOLUME masks */
 +#define AR71XX_I2S_CHANNEL1(v)			((v) << 8)
@@ -165,7 +189,9 @@
 +#define AR71XX_I2S_SAMPLE_COUNTER_CH1		(0xFFFF << 16)
 +
 +/* STEREO_CLOCK_DIV masks */
-+#define AR71XX_I2S_DIV_INT(v)			((v) << 16)
++#define AR71XX_I2S_CLK_SHIFT			16
++#define AR71XX_I2S_CLK_DIVF_MASK		0xffff
++#define AR71XX_I2S_DIV_INT(v)			((v) << AR71XX_I2S_CLK_SHIFT)
 +#define AR71XX_I2S_DIV_FRAC(v)			(v)
 +
 +/* MBOX Registers */
@@ -272,8 +298,11 @@
 +//QCU Tx Queue Descriptor
 +#define AR71XX_I2S_Q_TXDP(v)		(0x18100800 + (v << 2))
 +
++#define AR71XX_I2S_FIFO_PHYSICAL_ADDR 	0x00
++
 +#define AR71XX_DMA_DREQ_PCM_TX		2
 +#define AR71XX_DMA_DREQ_PCM_RX		3
++
 +
 +#if 0
 +/* I2S pin configuration */
@@ -292,64 +321,31 @@
 +	struct regmap *mbox_regmap;
 +};
 +
-+#if 0
-+void ar71xx_i2s_set_gpio(int gpio) {
-+	ar71xx_i2s_gpio=gpio;
-+}
-+EXPORT_SYMBOL(ar71xx_i2s_set_gpio);
-+#endif
-+
 +
 +static void ar71xx_i2s_start_clock(struct ar71xx_i2s_dev *dev)
 +{
-+#if  0
-+	/* Start the clock if in master mode */
-+	unsigned int master = dev->fmt & SND_SOC_DAIFMT_MASTER_MASK;
++	printk("called start clock\n");
 +
-+	/* TODO only master supported? */
-+	switch (master) {
-+	case SND_SOC_DAIFMT_CBS_CFS:
-+	case SND_SOC_DAIFMT_CBS_CFM:
-+		regmap_update_bits(dev->i2s_regmap, AR71XX_I2S_STEREO0_CONFIG,
-+			AR71XX_I2S_ENABLE, AR71XX_I2S_ENABLE);
-+		break;
-+	default:
-+		break;
-+	}
-+#endif
++	/* Start da clock */
++	regmap_update_bits(dev->i2s_regmap, AR71XX_I2S_STEREO0_CONFIG,
++		AR71XX_I2S_ENABLE, AR71XX_I2S_ENABLE);
 +}
 +
 +static void ar71xx_i2s_stop_clock(struct ar71xx_i2s_dev *dev)
 +{
-+//	uint32_t clkreg;
-+//	int timeout = 1000;
++	printk("called stop clock\n");
 +
 +	/* Stop clock */
-+//	regmap_update_bits(dev->i2s_regmap, AR71XX_I2S_STEREO0_CONFIG,
-+//			AR71XX_I2S_ENABLE, 0x00);
++	regmap_update_bits(dev->i2s_regmap, AR71XX_I2S_STEREO0_CONFIG,
++			AR71XX_I2S_ENABLE, 0x00);
 +
-+// AR9331 doesn't provide BUSY and KILL Flags
-+#if 0
-+	/* Wait for the BUSY flag going down */
-+	while (--timeout) {
-+		regmap_read(dev->clk_regmap, AR71XX_CLK_PCMCTL_REG, &clkreg);
-+		if (!(clkreg & AR71XX_CLK_BUSY))
-+			break;
-+	}
-+
-+	if (!timeout) {
-+		/* KILL the clock */
-+		dev_err(dev->dev, "I2S clock didn't stop. Kill the clock!\n");
-+		regmap_update_bits(dev->clk_regmap, AR71XX_CLK_PCMCTL_REG,
-+			AR71XX_CLK_KILL | AR71XX_CLK_PASSWD_MASK,
-+			AR71XX_CLK_KILL | AR71XX_CLK_PASSWD);
-+	}
-+#endif
 +}
 +
 +static void ar71xx_i2s_clear_fifos(struct ar71xx_i2s_dev *dev,
 +				    bool tx, bool rx)
 +{
++
++	printk("called clear fifos\n");
 +#if 0
 +	/* Reset Buffers */
 +	regmap_update_bits(dev->i2s_regmap, AR71XX_I2S_STEREO0_CONFIG,
@@ -435,17 +431,47 @@
 +	return 0;
 +}
 +
-+static int ar71xx_i2s_set_dai_bclk_ratio(struct snd_soc_dai *dai,
-+				      unsigned int ratio)
++
++//TODO
++static int ar71xx_i2s_hw_params(struct snd_pcm_substream *substream,
++				 struct snd_pcm_hw_params *params,
++				 struct snd_soc_dai *dai)
 +{
 +	struct ar71xx_i2s_dev *dev = snd_soc_dai_get_drvdata(dai);
-+	dev->bclk_ratio = ratio;
-+	return 0;
-+}
 +
++	unsigned int sampling_rate = params_rate(params);
++	unsigned int divi, divf, mclk_frequency, posedge;
++	unsigned int conf, i2s_word_size;
++	unsigned int master = dev->fmt & SND_SOC_DAIFMT_MASTER_MASK;
++	int clk_src = AR71XX_CLK_SRC_CPU;
++	int channels;
 +#if 0
-+static void ar71xx_i2s_setup_gpio(struct ar71xx_i2s_dev *dev)
-+{
++	bool bit_master =	(master == SND_SOC_DAIFMT_CBS_CFS
++					|| master == SND_SOC_DAIFMT_CBS_CFM);
++
++	bool frame_master =	(master == SND_SOC_DAIFMT_CBS_CFS
++					|| master == SND_SOC_DAIFMT_CBM_CFS);
++#endif
++
++
++	unsigned int mclk_ratio = 256;  /* see supported ratios of TAS5711 */
++	uint64_t dividend;
++	uint32_t confreg;
++
++	printk("called hw params\n");
++
++	/*
++	 * If a stream is already enabled,
++	 * the registers are already set properly.
++	 */
++	regmap_read(dev->i2s_regmap, AR71XX_I2S_STEREO0_CONFIG, &confreg);
++	
++	// I2S enabled
++	if (confreg & AR71XX_I2S_ENABLE)
++		return 0;
++
++
++	/* Route the i2s pins to the gpios */
 +	regmap_update_bits(dev->gpio_regmap, 
 +		AR71XX_GPIO_FUNCTION,
 +		AR71XX_GPIO_FUNCTION_I2SO_22_18_EN |
@@ -454,290 +480,127 @@
 +		AR71XX_GPIO_FUNCTION_I2SO_22_18_EN |
 +			AR71XX_GPIO_FUNCTION_I2S_MCKEN |
 +			AR71XX_GPIO_FUNCTION_I2SO_EN);
-+}
-+#endif
-+
-+
-+static int ar71xx_i2s_hw_params(struct snd_pcm_substream *substream,
-+				 struct snd_pcm_hw_params *params,
-+				 struct snd_soc_dai *dai)
-+{
-+	struct ar71xx_i2s_dev *dev = snd_soc_dai_get_drvdata(dai);
-+	//TODO
-+
-+
-+	return 0;
-+#if 0
-+
-+	unsigned int sampling_rate = params_rate(params);
-+	unsigned int data_length, data_delay, bclk_ratio;
-+	unsigned int ch1pos, ch2pos, mode, format;
-+	unsigned int mash = AR71XX_CLK_MASH_1;
-+	unsigned int divi, divf, target_frequency;
-+	int clk_src = -1;
-+	unsigned int master = dev->fmt & SND_SOC_DAIFMT_MASTER_MASK;
-+	bool bit_master =	(master == SND_SOC_DAIFMT_CBS_CFS
-+					|| master == SND_SOC_DAIFMT_CBS_CFM);
-+
-+	bool frame_master =	(master == SND_SOC_DAIFMT_CBS_CFS
-+					|| master == SND_SOC_DAIFMT_CBM_CFS);
-+	uint32_t csreg;
-+
-+	/*
-+	 * If a stream is already enabled,
-+	 * the registers are already set properly.
-+	 */
-+	regmap_read(dev->i2s_regmap, AR71XX_I2S_CS_A_REG, &csreg);
 +	
-+	// TXON and RXON enabled
-+	if (csreg & (AR71XX_I2S_TXON | AR71XX_I2S_RXON))
-+		return 0;
 +
-+
-+	//ar71xx_i2s_setup_gpio();
-+
-+	/*
-+	 * Adjust the data length according to the format.
-+	 * We prefill the half frame length with an integer
-+	 * divider of 2400 as explained at the clock settings.
-+	 * Maybe it is overwritten there, if the Integer mode
-+	 * does not apply.
++	/* Set configurations 
++	 *
++	 * DIV_BYPASS = 0 	--> Divider not bypassed
++	 * AUDIO_CLOCK_SEL = 0	--> use CPU clock
++	 * SPDIF_ENABLE = 0	--> SPDIF is disabled
++	 * SAMPLE_CNT_CLEAR_TYPE = 0 --> explicit zero is written to sample counters
 +	 */
-+	switch (params_format(params)) {
-+	case SNDRV_PCM_FORMAT_S16_LE:
-+		data_length = 16;
-+		bclk_ratio = 40;
-+		break;
-+	case SNDRV_PCM_FORMAT_S24_LE:
-+		data_length = 24;
-+		bclk_ratio = 40;
-+		break;
-+	case SNDRV_PCM_FORMAT_S32_LE:
-+		data_length = 32;
-+		bclk_ratio = 80;
-+		break;
-+	default:
++	conf = 0;
++
++	// TODO check is clock is maybe inverted by default
++	/* Clock inversion is not supported */
++	if ((dev->fmt & SND_SOC_DAIFMT_INV_MASK) == SND_SOC_DAIFMT_NB_NF) {
++		dev_err(dev->dev, "Clock inversion not supported\n");
 +		return -EINVAL;
 +	}
 +
-+	/* If bclk_ratio already set, use that one. */
-+	if (dev->bclk_ratio)
-+		bclk_ratio = dev->bclk_ratio;
-+
-+#endif
-+	/*
-+	 * Clock Settings
-+	 *
-+	 * The target frequency of the bit clock is
-+	 *	sampling rate * frame length
-+	 *
-+	 * Integer mode:
-+	 * Sampling rates that are multiples of 8000 kHz
-+	 * can be driven by the oscillator of 19.2 MHz
-+	 * with an integer divider as long as the frame length
-+	 * is an integer divider of 19200000/8000=2400 as set up above.
-+	 * This is no longer possible if the sampling rate
-+	 * is too high (e.g. 192 kHz), because the oscillator is too slow.
-+	 *
-+	 * MASH mode:
-+	 * For all other sampling rates, it is not possible to
-+	 * have an integer divider. Approximate the clock
-+	 * with the MASH module that induces a slight frequency
-+	 * variance. To minimize that it is best to have the fastest
-+	 * clock here. That is PLLD with 500 MHz.
-+	 */
-+
-+	//TODO test if bclk_ratio is overwritten
-+	//     look for new bugs
-+
-+	//XXX 
-+#if 0
-+	/* every frame needs to be 32 bit long */
-+	bclk_ratio = 64;
-+
-+	target_frequency = sampling_rate * bclk_ratio;
-+	clk_src = AR71XX_CLK_SRC_OSC;
-+	mash = AR71XX_CLK_MASH_0;
-+
-+	if (ar71xx_clk_freq[clk_src] % target_frequency == 0
-+			&& bit_master && frame_master) {
-+		divi = ar71xx_clk_freq[clk_src] / target_frequency;
-+		divf = 0;
-+	} else {
-+		uint64_t dividend;
-+
-+		if (!dev->bclk_ratio) {
-+			/*
-+			 * Overwrite bclk_ratio, because the
-+			 * above trick is not needed or can
-+			 * not be used.
-+			 */
-+			bclk_ratio = 2 * data_length;
-+		}
-+
-+		target_frequency = sampling_rate * bclk_ratio;
-+
-+		clk_src = AR71XX_CLK_SRC_PLLD;
-+		mash = AR71XX_CLK_MASH_1;
-+
-+		dividend = ar71xx_clk_freq[clk_src];
-+		dividend <<= AR71XX_CLK_SHIFT;
-+		do_div(dividend, target_frequency);
-+		divi = dividend >> AR71XX_CLK_SHIFT;
-+		divf = dividend & AR71XX_CLK_DIVF_MASK;
-+	}
 +	
-+	//XXX
-+	printk("bclk_ratio: %d\nsampling_rate: %d\ntarget_freq: %d\n", bclk_ratio, sampling_rate, target_frequency);
-+	printk("divi: %d\tdivf: %d\n", divi, divf);	
-+
-+	/* Set clock divider */
-+	regmap_write(dev->clk_regmap, AR71XX_CLK_PCMDIV_REG, AR71XX_CLK_PASSWD
-+			| AR71XX_CLK_DIVI(divi)
-+			| AR71XX_CLK_DIVF(divf));
-+
-+	/* Setup clock, but don't start it yet */
-+	regmap_write(dev->clk_regmap, AR71XX_CLK_PCMCTL_REG, AR71XX_CLK_PASSWD
-+			| AR71XX_CLK_MASH(mash)
-+			| AR71XX_CLK_SRC(clk_src));
-+
-+	/* Setup the frame format */
-+	format = AR71XX_I2S_CHEN;
-+
-+	// XXX always 32 bit width
-+	//data_length = 32;
-+
-+	if (data_length >= 24)
-+		format |= AR71XX_I2S_CHWEX;
-+
-+	format |= AR71XX_I2S_CHWID((data_length-8)&0xf);
-+
-+	switch (dev->fmt & SND_SOC_DAIFMT_FORMAT_MASK) {
-+	case SND_SOC_DAIFMT_I2S:
-+		data_delay = 1;
-+		break;
-+	default:
-+		/*
-+		 * TODO
-+		 * Others are possible but are not implemented at the moment.
-+		 */
-+		dev_err(dev->dev, "%s:bad format\n", __func__);
-+		return -EINVAL;
-+	}
-+
-+	ch1pos = data_delay;
-+	ch2pos = bclk_ratio / 2 + data_delay;
-+
-+	switch (params_channels(params)) {
-+	case 2:
-+		format = AR71XX_I2S_CH1(format) | AR71XX_I2S_CH2(format);
-+		format |= AR71XX_I2S_CH1(AR71XX_I2S_CHPOS(ch1pos));
-+		format |= AR71XX_I2S_CH2(AR71XX_I2S_CHPOS(ch2pos));
-+		break;
-+	default:
-+		return -EINVAL;
-+	}
-+
-+	/*
-+	 * Set format for both streams.
-+	 * We cannot set another frame length
-+	 * (and therefore word length) anyway,
-+	 * so the format will be the same.
-+	 */
-+	regmap_write(dev->i2s_regmap, AR71XX_I2S_RXC_A_REG, format);
-+	regmap_write(dev->i2s_regmap, AR71XX_I2S_TXC_A_REG, format);
-+
-+	//XXX
-+	/* enable PDM input for MEMS microphone */
-+#if 1
-+	regmap_update_bits(dev->i2s_regmap, AR71XX_I2S_MODE_A_REG,
-+			AR71XX_I2S_PDME,
-+			0xFFFF);
-+#endif
-+	/* Setup the I2S mode */
-+	mode = 0;
-+
-+	if (data_length <= 16) {
-+		/*
-+		 * Use frame packed mode (2 channels per 32 bit word)
-+		 * We cannot set another frame length in the second stream
-+		 * (and therefore word length) anyway,
-+		 * so the format will be the same.
-+		 */
-+		mode |= AR71XX_I2S_FTXP | AR71XX_I2S_FRXP;
-+	}
-+
-+#if 1
-+	mode |= AR71XX_I2S_FLEN(bclk_ratio - 1);
-+	mode |= AR71XX_I2S_FSLEN(bclk_ratio / 2);
-+#else
-+	//XXX
-+	mode |= AR71XX_I2S_FLEN(63);
-+	mode |= AR71XX_I2S_FSLEN(32);
-+#endif
-+	/* Master or slave? */
++	/* Set master/slave */
 +	switch (dev->fmt & SND_SOC_DAIFMT_MASTER_MASK) {
 +	case SND_SOC_DAIFMT_CBS_CFS:
 +		/* CPU is master */
-+		break;
-+	case SND_SOC_DAIFMT_CBM_CFS:
-+		/*
-+		 * CODEC is bit clock master
-+		 * CPU is frame master
-+		 */
-+		mode |= AR71XX_I2S_CLKM;
-+		break;
-+	case SND_SOC_DAIFMT_CBS_CFM:
-+		/*
-+		 * CODEC is frame master
-+		 * CPU is bit clock master
-+		 */
-+		mode |= AR71XX_I2S_FSM;
++		conf |= AR71XX_I2S_MASTER;
 +		break;
 +	case SND_SOC_DAIFMT_CBM_CFM:
 +		/* CODEC is master */
-+		mode |= AR71XX_I2S_CLKM;
-+		mode |= AR71XX_I2S_FSM;
++		//TODO has to be tested!
++		conf |= AR71XX_I2S_REFCLK_SEL;
++		conf |= AR71XX_I2S_MCK_SEL;
 +		break;
 +	default:
 +		dev_err(dev->dev, "%s:bad master\n", __func__);
 +		return -EINVAL;
 +	}
 +
-+	/*
-+	 * Invert clocks?
-+	 *
-+	 * The BCM approach seems to be inverted to the classical I2S approach.
-+	 */
-+	switch (dev->fmt & SND_SOC_DAIFMT_INV_MASK) {
-+	case SND_SOC_DAIFMT_NB_NF:
-+		/* None. Therefore, both for BCM */
-+		mode |= AR71XX_I2S_CLKI;
-+		mode |= AR71XX_I2S_FSI;
++	/* Set format */
++	switch (dev->fmt & SND_SOC_DAIFMT_FORMAT_MASK) {
++	case SND_SOC_DAIFMT_I2S:
++		conf |= AR71XX_I2S_I2S_DELAY;
 +		break;
-+	case SND_SOC_DAIFMT_IB_IF:
-+		/* Both. Therefore, none for BCM */
-+		break;
-+	case SND_SOC_DAIFMT_NB_IF:
++	default:
 +		/*
-+		 * Invert only frame sync. Therefore,
-+		 * invert only bit clock for BCM
++		 * TODO
++		 * Others are possible but are not implemented at the moment.
++		 * Only unset delay bit??
 +		 */
-+		mode |= AR71XX_I2S_CLKI;
++		dev_err(dev->dev, "%s:bad format\n", __func__);
++		return -EINVAL;
++	}
++
++
++	switch (params_format(params)) {
++	case SNDRV_PCM_FORMAT_S16_LE:
++		i2s_word_size = 16;
 +		break;
-+	case SND_SOC_DAIFMT_IB_NF:
-+		/*
-+		 * Invert only bit clock. Therefore,
-+		 * invert only frame sync for BCM
-+		 */
-+		mode |= AR71XX_I2S_FSI;
++	case SNDRV_PCM_FORMAT_S24_LE:
++		i2s_word_size = 24;
++		break;
++	case SNDRV_PCM_FORMAT_S32_LE:
++		i2s_word_size = 32;
 +		break;
 +	default:
 +		return -EINVAL;
 +	}
 +
-+	regmap_write(dev->i2s_regmap, AR71XX_I2S_MODE_A_REG, mode);
++	/* Set PCM swap */
++	//TODO
++	// set bit according to SNDRV_PCM_FORMAT (BE or LE)
 +
++	/* Set input (mic) word size */
++	//TODO
++	// 1 = 32 Bit
++	conf |= AR71XX_I2S_MIC_WORD_SIZE;
++
++	/* Set Stereo/Mono */
++	switch (params_channels(params)) {
++	case 2:
++		//TODO mono supported? set STEREO_MONO
++		/* Stereo is default so STEREO_MONO needn't be set */
++		channels = 2;
++		break;
++	default:
++		return -EINVAL;
++	}
++
++	/* Set internal data word size */
++	//TODO
++	conf |= AR71XX_I2S_DATA_WORD_SIZE(AR71XX_I2S_DATA_WORD_32);
++
++	/* Set output (I2S DAC) word size */
++	//TODO
++	// 1 = 32 Bit
++	conf |= AR71XX_I2S_I2S_WORD_SIZE;
++
++	/* Write configurations to register */
++	regmap_write(dev->i2s_regmap, AR71XX_I2S_STEREO0_CONFIG, conf);
++
++
++	mclk_frequency = sampling_rate * mclk_ratio * 2; // TODO find out where the 2 comes from. what a mistery! 
++
++	dividend = ar71xx_clk_freq[clk_src];
++	dividend <<= AR71XX_I2S_CLK_SHIFT;
++	do_div(dividend, mclk_frequency);
++	divi = dividend >> AR71XX_I2S_CLK_SHIFT;
++	divf = dividend & AR71XX_I2S_CLK_DIVF_MASK;
++
++	posedge = mclk_ratio / (channels * 64);
++
++
++	/* Set clock divider */
++	regmap_write(dev->i2s_regmap, AR71XX_I2S_STEREO0_CLK_DIV,
++			AR71XX_I2S_DIV_INT(divi) | AR71XX_I2S_DIV_FRAC(divf));
++
++	/* Set posedge */
++	regmap_update_bits(dev->i2s_regmap, AR71XX_I2S_STEREO0_CONFIG,
++			AR71XX_I2S_POSEDGE_MASK, AR71XX_I2S_POSEDGE(posedge));
++
++	//TODO these registers might be in the MBOX
++	//leave it empty for now as we only care about the clock
++#if 0
 +	/* Setup the DMA parameters */
 +	regmap_update_bits(dev->i2s_regmap, AR71XX_I2S_CS_A_REG,
 +			AR71XX_I2S_RXTHR(1)
@@ -753,6 +616,7 @@
 +	/* Clear FIFOs */
 +	ar71xx_i2s_clear_fifos(dev, true, true);
 +#endif
++	return 0;
 +
 +}
 +
@@ -760,13 +624,14 @@
 +		struct snd_soc_dai *dai)
 +{
 +	struct ar71xx_i2s_dev *dev = snd_soc_dai_get_drvdata(dai);
-+	uint32_t cs_reg;
-+	
-+	return 0;
++	//uint32_t conf_reg;
 +
-+#if 0
++	printk("called prepare\n");
++	
++
 +	ar71xx_i2s_start_clock(dev);
 +
++#if 0
 +	/*
 +	 * Clear both FIFOs if the one that should be started
 +	 * is not empty at the moment. This should only happen
@@ -782,15 +647,17 @@
 +			&& (cs_reg & AR71XX_I2S_RXD))
 +		ar71xx_i2s_clear_fifos(dev, false, true);
 +
-+	return 0;
 +#endif
++	return 0;
 +}
 +
 +static void ar71xx_i2s_stop(struct ar71xx_i2s_dev *dev,
 +		struct snd_pcm_substream *substream,
 +		struct snd_soc_dai *dai)
 +{
-+	uint32_t mask;
++	//uint32_t mask;
++
++	printk("called stop\n");
 +
 +#if 0
 +	if (substream->stream == SNDRV_PCM_STREAM_CAPTURE)
@@ -800,26 +667,25 @@
 +
 +	regmap_update_bits(dev->i2s_regmap,
 +			AR71XX_I2S_CS_A_REG, mask, 0);
++#endif
 +
 +	/* Stop also the clock when not SND_SOC_DAIFMT_CONT */
 +	if (!dai->active && !(dev->fmt & SND_SOC_DAIFMT_CONT))
 +		ar71xx_i2s_stop_clock(dev);
-+#endif
 +}
 +
-+#if 0
 +static int ar71xx_i2s_trigger(struct snd_pcm_substream *substream, int cmd,
 +			       struct snd_soc_dai *dai)
 +{
 +	struct ar71xx_i2s_dev *dev = snd_soc_dai_get_drvdata(dai);
-+	uint32_t mask;
++	//uint32_t mask;
 +
 +	switch (cmd) {
 +	case SNDRV_PCM_TRIGGER_START:
 +	case SNDRV_PCM_TRIGGER_RESUME:
 +	case SNDRV_PCM_TRIGGER_PAUSE_RELEASE:
 +		ar71xx_i2s_start_clock(dev);
-+
++#if 0
 +		if (substream->stream == SNDRV_PCM_STREAM_CAPTURE)
 +			mask = AR71XX_I2S_RXON;
 +		else
@@ -827,6 +693,7 @@
 +
 +		regmap_update_bits(dev->i2s_regmap,
 +				AR71XX_I2S_CS_A_REG, mask, mask);
++#endif
 +		break;
 +
 +	case SNDRV_PCM_TRIGGER_STOP:
@@ -841,10 +708,13 @@
 +	return 0;
 +}
 +
++
 +static int ar71xx_i2s_startup(struct snd_pcm_substream *substream,
 +			       struct snd_soc_dai *dai)
 +{
 +	struct ar71xx_i2s_dev *dev = snd_soc_dai_get_drvdata(dai);
++	
++	printk("called startup\n");
 +
 +	if (dai->active)
 +		return 0;
@@ -852,9 +722,12 @@
 +	/* Should this still be running stop it */
 +	ar71xx_i2s_stop_clock(dev);
 +
++	//TODO I2S block can't be enabled i think...
++#if 0
 +	/* Enable PCM block */
 +	regmap_update_bits(dev->i2s_regmap, AR71XX_I2S_STEREO0_CONFIG,
 +			AR71XX_I2S_ENABLE, AR71XX_I2S_ENABLE);
++#endif
 +
 +//no standby regs available
 +#if 0
@@ -873,6 +746,8 @@
 +		struct snd_soc_dai *dai)
 +{
 +	struct ar71xx_i2s_dev *dev = snd_soc_dai_get_drvdata(dai);
++	
++	printk("called shutdown\n");
 +
 +	ar71xx_i2s_stop(dev, substream, dai);
 +
@@ -880,9 +755,12 @@
 +	if (dai->active)
 +		return;
 +
++	//TODO see startup
++#if 0
 +	/* Disable the module */
 +	regmap_update_bits(dev->i2s_regmap, AR71XX_I2S_STEREO0_CONFIG,
 +			AR71XX_I2S_ENABLE, 0);
++#endif
 +
 +	/*
 +	 * Stopping clock is necessary, because stop does
@@ -890,20 +768,18 @@
 +	 */
 +	ar71xx_i2s_stop_clock(dev);
 +}
-+#endif
 +
-+#if 0
 +
 +static const struct snd_soc_dai_ops ar71xx_i2s_dai_ops = {
++
 +	.startup	= ar71xx_i2s_startup,
 +	.shutdown	= ar71xx_i2s_shutdown,
 +	.prepare	= ar71xx_i2s_prepare,
 +	.trigger	= ar71xx_i2s_trigger,
 +	.hw_params	= ar71xx_i2s_hw_params,
 +	.set_fmt	= ar71xx_i2s_set_dai_fmt,
-+	.set_bclk_ratio	= ar71xx_i2s_set_dai_bclk_ratio
++
 +};
-+#endif
 +
 +static int ar71xx_i2s_dai_probe(struct snd_soc_dai *dai)
 +{
@@ -916,6 +792,7 @@
 +}
 +
 +static struct snd_soc_dai_driver ar71xx_i2s_dai = {
++	//TODO check available formats on ar9331
 +	.name	= "ar71xx-i2s",
 +	.probe	= ar71xx_i2s_dai_probe,
 +	.playback = {
@@ -931,7 +808,6 @@
 +		.channels_max = 2,
 +		.rates =	SNDRV_PCM_RATE_8000_192000,
 +		.formats =	SNDRV_PCM_FMTBIT_S16_LE
-+				| SNDRV_PCM_FMTBIT_S24_LE
 +				| SNDRV_PCM_FMTBIT_S32_LE
 +		},
 +	.ops = &ar71xx_i2s_dai_ops,
@@ -976,6 +852,7 @@
 +#endif
 +
 +static const struct regmap_config ar71xx_regmap_config[] = {
++	/* I2S Registers */
 +	{
 +		.reg_bits = 32,
 +		.reg_stride = 4,
@@ -985,6 +862,7 @@
 +		//.volatile_reg = ar71xx_i2s_volatile_reg,
 +		.cache_type = REGCACHE_RBTREE,
 +	},
++	/* MBOX DMA Registers */
 +	{
 +		.reg_bits = 32,
 +		.reg_stride = 4,
@@ -993,6 +871,7 @@
 +		//.volatile_reg = ar71xx_clk_volatile_reg,
 +		.cache_type = REGCACHE_RBTREE,
 +	},
++	/* GPIO Registers (only GPIO Function) */
 +	{
 +		.reg_bits = 32,
 +		.reg_stride = 4,
@@ -1066,14 +945,13 @@
 +	dev->mbox_regmap = regmap[1];
 +	dev->gpio_regmap = regmap[2];
 +
-+#if 0
++
 +	/* Set the DMA address */
 +	dev->dma_data[SNDRV_PCM_STREAM_PLAYBACK].addr =
 +		(dma_addr_t)AR71XX_I2S_FIFO_PHYSICAL_ADDR;
 +
 +	dev->dma_data[SNDRV_PCM_STREAM_CAPTURE].addr =
 +		(dma_addr_t)AR71XX_I2S_FIFO_PHYSICAL_ADDR;
-+#endif
 +
 +	/* Set the DREQ */
 +	dev->dma_data[SNDRV_PCM_STREAM_PLAYBACK].slave_id =
@@ -1090,6 +968,11 @@
 +	/* Set burst */
 +	dev->dma_data[SNDRV_PCM_STREAM_PLAYBACK].maxburst = 2;
 +	dev->dma_data[SNDRV_PCM_STREAM_CAPTURE].maxburst = 2;
++	
++	//XXX
++	/* Set name */
++	dev->dma_data[SNDRV_PCM_STREAM_PLAYBACK].chan_name = "playback_channel";
++	dev->dma_data[SNDRV_PCM_STREAM_CAPTURE].chan_name = "capture_channel";
 +
 +	/* BCLK ratio - use default */
 +	dev->bclk_ratio = 0;
@@ -1097,6 +980,7 @@
 +	/* Store the pdev */
 +	dev->dev = &pdev->dev;
 +	dev_set_drvdata(&pdev->dev, dev);
++
 +
 +	ret = snd_soc_register_component(&pdev->dev,
 +			&ar71xx_i2s_component, &ar71xx_i2s_dai, 1);
@@ -1116,11 +1000,14 @@
 +		return ret;
 +	}
 +
++
 +	return 0;
 +}
 +
 +static int ar71xx_i2s_remove(struct platform_device *pdev)
 +{
++	printk("called remove\n");
++
 +	snd_dmaengine_pcm_unregister(&pdev->dev);
 +	snd_soc_unregister_component(&pdev->dev);
 +	return 0;
@@ -1139,7 +1026,7 @@
 +
 +MODULE_ALIAS("platform:ar71xx-i2s");
 +MODULE_DESCRIPTION("AR71XX I2S interface");
-+MODULE_AUTHOR("Florian Meier <florian.meier@koalo.de>");
++MODULE_AUTHOR("Felix Kramer <felixkramerroki@aol.com>");
 +MODULE_LICENSE("GPL v2");
 --- a/sound/soc/Kconfig
 +++ b/sound/soc/Kconfig
@@ -1182,7 +1069,7 @@
  	 * DAI format configuration
 --- /dev/null
 +++ b/sound/soc/ar71xx/ar71xx-i2s.h
-@@ -0,0 +1,37 @@
+@@ -0,0 +1,26 @@
 +/*
 + * I2S configuration for sound cards. 
 + *
@@ -1206,18 +1093,7 @@
 +#ifndef AR71XX_I2S_H
 +#define AR71XX_I2S_H
 +
-+#if 0
-+/* I2S pin assignment */
-+#define AR71XX_I2S_GPIO_AUTO	0
-+#define AR71XX_I2S_GPIO_PIN18	1
-+#define AR71XX_I2S_GPIO_PIN28	2
 +
-+/* Alt mode to enable I2S */
-+#define AR71XX_I2S_GPIO_PIN18_ALT	0
-+#define AR71XX_I2S_GPIO_PIN28_ALT	2
-+
-+extern void ar71xx_i2s_set_gpio(int gpio);
-+#endif
 +
 +#endif
 --- a/sound/soc/soc-core.c
@@ -1305,7 +1181,7 @@
  #include "machtypes.h"
  
  #define CARAMBOLA2_GPIO_LED_WLAN		0
-@@ -61,6 +62,35 @@ static struct gpio_keys_button carambola
+@@ -61,6 +62,49 @@ static struct gpio_keys_button carambola
  	},
  };
  
@@ -1338,10 +1214,24 @@
 +};
 +#endif
 +
++#if defined(CONFIG_SND_SOC_AR71XX_HIFIBERRY_DAC) || defined(CONFIG_SND_SOC_AR71XX_HIFIBERRY_DAC_MODULE)
++static struct platform_device snd_hifiberry_dac_device = {
++	.name 		= "snd-hifiberry-dac",
++	.id		= 0,
++	.num_resources	= 0,
++};
++
++static struct platform_device snd_pcm5102a_codec_device = {
++	.name		= "pcm5102a-codec",
++	.id		= -1,
++	.num_resources	= 0,
++};
++#endif
++
  static void __init carambola2_common_setup(void)
  {
  	u8 *art = (u8 *) KSEG1ADDR(0x1fff0000);
-@@ -81,6 +111,11 @@ static void __init carambola2_common_set
+@@ -81,6 +125,17 @@ static void __init carambola2_common_set
  
  	/* WAN port */
  	ath79_register_eth(0);
@@ -1349,6 +1239,12 @@
 +#ifdef CONFIG_SND_SOC_AR71XX_I2S_MODULE
 +	/* I2S module */
 +	ath79_register_i2s(&ar9331_i2s_device);
++#endif
++
++#if defined(CONFIG_SND_SOC_AR71XX_HIFIBERRY_DAC) || defined(CONFIG_SND_SOC_AR71XX_HIFIBERRY_DAC_MODULE)
++	/* Hifiberry dac module */
++	ath79_register_i2s(&snd_hifiberry_dac_device);
++	ath79_register_i2s(&snd_pcm5102a_codec_device);
 +#endif
  }
  
@@ -1398,7 +1294,7 @@
  # Miscellaneous objects
 --- /dev/null
 +++ b/sound/soc/ar71xx/hifiberry_dac.c
-@@ -0,0 +1,107 @@
+@@ -0,0 +1,112 @@
 +/*
 + * ASoC Driver for HifiBerry DAC
 + *
@@ -1432,13 +1328,14 @@
 +
 +static int snd_rpi_hifiberry_dac_init(struct snd_soc_pcm_runtime *rtd)
 +{
-+	printk("++++++++++initialized hifiberry dac+++++++++++\n");
++	printk("in dac_init\n");
 +	return 0;
 +}
 +
 +static int snd_rpi_hifiberry_dac_hw_params(struct snd_pcm_substream *substream,
 +				       struct snd_pcm_hw_params *params)
 +{
++	printk("in dac_hw_params\n");
 +	struct snd_soc_pcm_runtime *rtd = substream->private_data;
 +	struct snd_soc_dai *cpu_dai = rtd->cpu_dai;
 +
@@ -1457,9 +1354,9 @@
 +{
 +	.name		= "HifiBerry DAC",
 +	.stream_name	= "HifiBerry DAC HiFi",
-+	.cpu_dai_name	= "bcm2708-i2s.0",
++	.cpu_dai_name	= "ar71xx-i2s.0",
 +	.codec_dai_name	= "pcm5102a-hifi",
-+	.platform_name	= "bcm2708-i2s.0",
++	.platform_name	= "ar71xx-i2s.0",
 +	.codec_name	= "pcm5102a-codec",
 +	.dai_fmt	= SND_SOC_DAIFMT_I2S | SND_SOC_DAIFMT_NB_NF |
 +				SND_SOC_DAIFMT_CBS_CFS,
@@ -1470,7 +1367,7 @@
 +
 +/* audio machine driver */
 +static struct snd_soc_card snd_rpi_hifiberry_dac = {
-+	.name         = "snd_rpi_hifiberry_dac",
++	.name         = "snd_carambola2_hifiberry_dac",
 +	.dai_link     = snd_rpi_hifiberry_dac_dai,
 +	.num_links    = ARRAY_SIZE(snd_rpi_hifiberry_dac_dai),
 +};
@@ -1478,6 +1375,8 @@
 +static int snd_rpi_hifiberry_dac_probe(struct platform_device *pdev)
 +{
 +	int ret = 0;
++
++	dev_info(&pdev->dev, "in ..._dac_probe()\n");
 +
 +	snd_rpi_hifiberry_dac.dev = &pdev->dev;
 +	ret = snd_soc_register_card(&snd_rpi_hifiberry_dac);
@@ -1489,6 +1388,8 @@
 +
 +static int snd_rpi_hifiberry_dac_remove(struct platform_device *pdev)
 +{
++	dev_info(&pdev->dev, "in ..._dac_remove()\n");
++
 +	return snd_soc_unregister_card(&snd_rpi_hifiberry_dac);
 +}
 +
