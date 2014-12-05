@@ -1,6 +1,12 @@
 --- /dev/null
 +++ b/sound/soc/ar71xx/Kconfig
-@@ -0,0 +1,14 @@
+@@ -0,0 +1,21 @@
++config SND_SOC_AR71XX_PCM
++	tristate "test based on qca i2s driver"
++	select REGMAP_MMIO
++	help
++	  Say Y or M...
++
 +config SND_SOC_AR71XX_I2S
 +	tristate "SoC Audio support for the AR71XX I2S Module"
 +	select REGMAP_MMIO
@@ -15,13 +21,18 @@
 +	select SND_SOC_PCM5102A
 +	help
 +	  Say Y or M...
++
 --- /dev/null
 +++ b/sound/soc/ar71xx/Makefile
-@@ -0,0 +1,9 @@
+@@ -0,0 +1,13 @@
 +# AR71XX Platform Support
 +snd-soc-ar71xx-i2s-objs := ar71xx-i2s.o
++snd-soc-ar71xx-pcm-objs := ar71xx-pcm.o ar71xx-mbox.o
++#snd-soc-ar71xx-mbox-objs := ar71xx-mbox.o
 +
 +obj-$(CONFIG_SND_SOC_AR71XX_I2S) += snd-soc-ar71xx-i2s.o
++obj-$(CONFIG_SND_SOC_AR71XX_PCM) += snd-soc-ar71xx-pcm.o
++#obj-$(CONFIG_SND_SOC_AR71XX_MBOX) += snd-soc-ar71xx-mbox.o
 +
 +# AR71XX Machine Support
 +snd-soc-ar71xx-hifiberry-dac-objs := hifiberry_dac.o
@@ -29,7 +40,9 @@
 +obj-$(CONFIG_SND_SOC_AR71XX_HIFIBERRY_DAC) += snd-soc-ar71xx-hifiberry-dac.o
 --- /dev/null
 +++ b/sound/soc/ar71xx/ar71xx-i2s.c
-@@ -0,0 +1,998 @@
+@@ -0,0 +1,807 @@
++//TODO setup gpio pins somewhere
++
 +/*
 + * ALSA SoC I2S Audio Layer for Broadcom AR71XX SoC
 + *
@@ -65,51 +78,6 @@
 +
 +#include "ar71xx-i2s.h"
 +
-+#include <linux/init.h>
-+#include <linux/module.h>
-+#include <linux/device.h>
-+#include <linux/slab.h>
-+#include <linux/delay.h>
-+#include <linux/io.h>
-+#include <linux/clk.h>
-+
-+#include <sound/core.h>
-+#include <sound/pcm.h>
-+#include <sound/pcm_params.h>
-+#include <sound/initval.h>
-+#include <sound/soc.h>
-+#include <sound/dmaengine_pcm.h>
-+
-+
-+#if 0
-+
-+/* Clock registers */
-+#define AR71XX_CLK_PCMCTL_REG  0x00
-+#define AR71XX_CLK_PCMDIV_REG  0x04
-+
-+/* Clock register settings */
-+#define AR71XX_CLK_PASSWD	(0x5a000000)
-+#define AR71XX_CLK_PASSWD_MASK	(0xff000000)
-+#define AR71XX_CLK_MASH(v)	((v) << 9)
-+#define AR71XX_CLK_FLIP		BIT(8)
-+#define AR71XX_CLK_BUSY		BIT(7)
-+#define AR71XX_CLK_KILL		BIT(5)
-+#define AR71XX_CLK_ENAB		BIT(4)
-+#define AR71XX_CLK_SRC(v)	(v)
-+
-+#define AR71XX_CLK_SHIFT		(12)
-+#define AR71XX_CLK_DIVI(v)		((v) << AR71XX_CLK_SHIFT)
-+#define AR71XX_CLK_DIVF(v)		(v)
-+#define AR71XX_CLK_DIVF_MASK		(0xFFF)
-+
-+
-+enum {
-+	AR71XX_CLK_MASH_0 = 0,
-+	AR71XX_CLK_MASH_1,
-+	AR71XX_CLK_MASH_2,
-+	AR71XX_CLK_MASH_3,
-+};
-+#endif
 +
 +enum {
 +	AR71XX_CLK_SRC_CPU = 0,
@@ -194,134 +162,22 @@
 +#define AR71XX_I2S_DIV_INT(v)			((v) << AR71XX_I2S_CLK_SHIFT)
 +#define AR71XX_I2S_DIV_FRAC(v)			(v)
 +
-+/* MBOX Registers */
-+#define AR71XX_MBOX_FIFO_STATUS			0x08
-+#define AR71XX_SLIC_MBOX_FIFO_STATUS		0x0c
-+#define AR71XX_MBOX_DMA_POLICY			0x10
-+#define AR71XX_SLIC_MBOX_DMA_POLICY		0x14
-+#define AR71XX_MBOX_DMA_RX_DECRIPTOR_BASE	0x18
-+#define AR71XX_MBOX_DMA_RX_CONTROL		0x1c
-+#define AR71XX_MBOX_DMA_TX_DECRIPTOR_BASE	0x20
-+#define AR71XX_MBOX_DMA_TX_CONTROL		0x24
-+#define AR71XX_SLIC_MBOX_DMA_RX_DECRIPTOR_BASE	0x28
-+#define AR71XX_SLIC_MBOX_DMA_RX_CONTROL		0x2c
-+#define AR71XX_SLIC_MBOX_DMA_TX_DECRIPTOR_BASE	0x30
-+#define AR71XX_SLIC_MBOX_DMA_TX_CONTROL		0x34
-+#define AR71XX_MBOX_FRAME			0x38
-+#define AR71XX_SLIC_MBOX_FRAME			0x3c
-+#define AR71XX_FIFO_TIMEOUT			0x40
-+#define AR71XX_MBOX_INT_STATUS			0x44
-+#define AR71XX_SLIC_MBOX_INT_STATUS		0x48
-+#define AR71XX_MBOX_INT_ENABLE			0x4c
-+#define AR71XX_SLIC_MBOX_INT_ENABLE		0x50
-+#define AR71XX_MBOX_FIFO_RESET			0x58
-+#define AR71XX_SLIC_MBOX_FIFO_RESET		0x5c
-+
-+
-+
-+#if 0
-+
-+/* I2S registers */
-+#define AR71XX_I2S_CS_A_REG		0x00
-+#define AR71XX_I2S_FIFO_A_REG		0x04
-+#define AR71XX_I2S_MODE_A_REG		0x08
-+#define AR71XX_I2S_RXC_A_REG		0x0c
-+#define AR71XX_I2S_TXC_A_REG		0x10
-+#define AR71XX_I2S_DREQ_A_REG		0x14
-+#define AR71XX_I2S_INTEN_A_REG	0x18
-+#define AR71XX_I2S_INTSTC_A_REG	0x1c
-+#define AR71XX_I2S_GRAY_REG		0x20
-+
-+/* I2S register settings */
-+#define AR71XX_I2S_STBY		BIT(25)
-+#define AR71XX_I2S_SYNC		BIT(24)
-+#define AR71XX_I2S_RXSEX		BIT(23)
-+#define AR71XX_I2S_RXF		BIT(22)
-+#define AR71XX_I2S_TXE		BIT(21)
-+#define AR71XX_I2S_RXD		BIT(20)
-+#define AR71XX_I2S_TXD		BIT(19)
-+#define AR71XX_I2S_RXR		BIT(18)
-+#define AR71XX_I2S_TXW		BIT(17)
-+#define AR71XX_I2S_CS_RXERR		BIT(16)
-+#define AR71XX_I2S_CS_TXERR		BIT(15)
-+#define AR71XX_I2S_RXSYNC		BIT(14)
-+#define AR71XX_I2S_TXSYNC		BIT(13)
-+#define AR71XX_I2S_DMAEN		BIT(9)
-+#define AR71XX_I2S_RXTHR(v)		((v) << 7)
-+#define AR71XX_I2S_TXTHR(v)		((v) << 5)
-+#define AR71XX_I2S_RXCLR		BIT(4)
-+#define AR71XX_I2S_TXCLR		BIT(3)
-+#define AR71XX_I2S_TXON		BIT(2)
-+#define AR71XX_I2S_RXON		BIT(1)
-+#define AR71XX_I2S_EN			(1)
-+
-+#define AR71XX_I2S_CLKDIS		BIT(28)
-+#define AR71XX_I2S_PDMN		BIT(27)
-+#define AR71XX_I2S_PDME		BIT(26)
-+#define AR71XX_I2S_FRXP		BIT(25)
-+#define AR71XX_I2S_FTXP		BIT(24)
-+#define AR71XX_I2S_CLKM		BIT(23)
-+#define AR71XX_I2S_CLKI		BIT(22)
-+#define AR71XX_I2S_FSM		BIT(21)
-+#define AR71XX_I2S_FSI		BIT(20)
-+#define AR71XX_I2S_FLEN(v)		((v) << 10)
-+#define AR71XX_I2S_FSLEN(v)		(v)
-+
-+#define AR71XX_I2S_CHWEX		BIT(15)
-+#define AR71XX_I2S_CHEN		BIT(14)
-+#define AR71XX_I2S_CHPOS(v)		((v) << 4)
-+#define AR71XX_I2S_CHWID(v)		(v)
-+#define AR71XX_I2S_CH1(v)		((v) << 16)
-+#define AR71XX_I2S_CH2(v)		(v)
-+
-+#define AR71XX_I2S_TX_PANIC(v)	((v) << 24)
-+#define AR71XX_I2S_RX_PANIC(v)	((v) << 16)
-+#define AR71XX_I2S_TX(v)		((v) << 8)
-+#define AR71XX_I2S_RX(v)		(v)
-+
-+#define AR71XX_I2S_INT_RXERR		BIT(3)
-+#define AR71XX_I2S_INT_TXERR		BIT(2)
-+#define AR71XX_I2S_INT_RXR		BIT(1)
-+#define AR71XX_I2S_INT_TXW		BIT(0)
-+
-+/* I2S DMA interface */
-+#define AR71XX_I2S_FIFO_PHYSICAL_ADDR	0x7E203004
-+#define AR71XX_DMA_DREQ_PCM_TX		2
-+#define AR71XX_DMA_DREQ_PCM_RX		3
-+
-+#endif
-+
-+/* I2S DMA interface */
-+//MAC Rx High/Low Priority Queue RXDP Pointer
-+#define AR71XX_I2S_RX_HP_QUEUE_POINTER	0x18100074
-+#define AR71XX_I2S_RX_LP_QUEUE_POINTER	0x18100078
-+//QCU Tx Queue Descriptor
-+#define AR71XX_I2S_Q_TXDP(v)		(0x18100800 + (v << 2))
-+
-+#define AR71XX_I2S_FIFO_PHYSICAL_ADDR 	0x00
-+
-+#define AR71XX_DMA_DREQ_PCM_TX		2
-+#define AR71XX_DMA_DREQ_PCM_RX		3
-+
-+
-+#if 0
-+/* I2S pin configuration */
-+static int ar71xx_i2s_gpio=AR71XX_I2S_GPIO_AUTO;
-+#endif
 +
 +/* General device struct */
 +struct ar71xx_i2s_dev {
-+	struct device				*dev;
++	struct device		*dev;
++	
++	struct regmap 		*i2s_regmap;
++	struct regmap 		*gpio_regmap;
++
++	//TODO check if needed
 +	struct snd_dmaengine_dai_dma_data	dma_data[2];
 +	unsigned int				fmt;
 +	unsigned int				bclk_ratio;
 +
-+	struct regmap *i2s_regmap;
-+	struct regmap *gpio_regmap;
-+	struct regmap *mbox_regmap;
 +};
 +
-+
++#if 0
 +static void ar71xx_i2s_start_clock(struct ar71xx_i2s_dev *dev)
 +{
 +	printk("called start clock\n");
@@ -340,7 +196,16 @@
 +			AR71XX_I2S_ENABLE, 0x00);
 +
 +}
++#endif
 +
++void ar71xx_stereo_reset(struct ar71xx_i2s_dev *dev)
++{
++	/* set reset bit in STEREO0_CONFIG */
++	regmap_update_bits(dev->i2s_regmap, AR71XX_I2S_STEREO0_CONFIG, 
++			AR71XX_I2S_RESET, AR71XX_I2S_RESET);
++}
++
++#if 0
 +static void ar71xx_i2s_clear_fifos(struct ar71xx_i2s_dev *dev,
 +				    bool tx, bool rx)
 +{
@@ -422,6 +287,7 @@
 +			AR71XX_I2S_RXON | AR71XX_I2S_TXON, i2s_active_state);
 +#endif
 +}
++#endif
 +
 +static int ar71xx_i2s_set_dai_fmt(struct snd_soc_dai *dai,
 +				      unsigned int fmt)
@@ -432,7 +298,6 @@
 +}
 +
 +
-+//TODO
 +static int ar71xx_i2s_hw_params(struct snd_pcm_substream *substream,
 +				 struct snd_pcm_hw_params *params,
 +				 struct snd_soc_dai *dai)
@@ -456,30 +321,32 @@
 +
 +	unsigned int mclk_ratio = 256;  /* see supported ratios of TAS5711 */
 +	uint64_t dividend;
-+	uint32_t confreg;
++	uint32_t confreg = 0;
 +
-+	printk("called hw params\n");
++	printk("called hw params, dev=%p, dev->gpio_regmap=%p, dev->i2s_regmap=%p\n", 
++		dev, dev->gpio_regmap, dev->i2s_regmap);
 +
++#if 0
++	//XXX test regmap read on gpio_regmap
++	regmap_read(dev->i2s_regmap, AR71XX_I2S_STEREO0_CONFIG, &confreg);
++	printk("after regmap_read, stereo0_config=0x%08X\n", confreg);
++
++	regmap_read(dev->gpio_regmap, AR71XX_GPIO_FUNCTION, &confreg);
++	printk("after regmap_read, gpio_function=0x%08X\n", confreg);
++#endif	
++
++	//TODO delete this as stereo0_config isn't 0 on default
 +	/*
 +	 * If a stream is already enabled,
 +	 * the registers are already set properly.
 +	 */
-+	regmap_read(dev->i2s_regmap, AR71XX_I2S_STEREO0_CONFIG, &confreg);
-+	
-+	// I2S enabled
-+	if (confreg & AR71XX_I2S_ENABLE)
++#if 0	
++	if (confreg)
 +		return 0;
++#endif
 +
++	
 +
-+	/* Route the i2s pins to the gpios */
-+	regmap_update_bits(dev->gpio_regmap, 
-+		AR71XX_GPIO_FUNCTION,
-+		AR71XX_GPIO_FUNCTION_I2SO_22_18_EN |
-+			AR71XX_GPIO_FUNCTION_I2S_MCKEN |
-+			AR71XX_GPIO_FUNCTION_I2SO_EN,
-+		AR71XX_GPIO_FUNCTION_I2SO_22_18_EN |
-+			AR71XX_GPIO_FUNCTION_I2S_MCKEN |
-+			AR71XX_GPIO_FUNCTION_I2SO_EN);
 +	
 +
 +	/* Set configurations 
@@ -491,12 +358,14 @@
 +	 */
 +	conf = 0;
 +
-+	// TODO check is clock is maybe inverted by default
++#if 0
++	// TODO this becomes false and returns here
 +	/* Clock inversion is not supported */
 +	if ((dev->fmt & SND_SOC_DAIFMT_INV_MASK) == SND_SOC_DAIFMT_NB_NF) {
 +		dev_err(dev->dev, "Clock inversion not supported\n");
 +		return -EINVAL;
 +	}
++#endif
 +
 +	
 +	/* Set master/slave */
@@ -531,29 +400,44 @@
 +		return -EINVAL;
 +	}
 +
++	/* Set output (I2S DAC) word size */
++	//TODO
++	// 1 = 32 Bit
 +
 +	switch (params_format(params)) {
++	case SNDRV_PCM_FORMAT_S8:
++		conf |= AR71XX_I2S_DATA_WORD_SIZE(AR71XX_I2S_DATA_WORD_8);
++		i2s_word_size = 8;
++		break;
++
 +	case SNDRV_PCM_FORMAT_S16_LE:
++		conf |= AR71XX_I2S_PCM_SWAP;
++	case SNDRV_PCM_FORMAT_S16_BE:
++		conf |= AR71XX_I2S_DATA_WORD_SIZE(AR71XX_I2S_DATA_WORD_16);
 +		i2s_word_size = 16;
 +		break;
++
 +	case SNDRV_PCM_FORMAT_S24_LE:
++		conf |= AR71XX_I2S_PCM_SWAP;
++	case SNDRV_PCM_FORMAT_S24_BE:
++		conf |= AR71XX_I2S_DATA_WORD_SIZE(AR71XX_I2S_DATA_WORD_24);
++		conf |= AR71XX_I2S_I2S_WORD_SIZE;
++		conf |= AR71XX_I2S_MIC_WORD_SIZE; /* check if good here */
 +		i2s_word_size = 24;
 +		break;
++
 +	case SNDRV_PCM_FORMAT_S32_LE:
++		conf |= AR71XX_I2S_PCM_SWAP;
++	case SNDRV_PCM_FORMAT_S32_BE:
++		conf |= AR71XX_I2S_DATA_WORD_SIZE(AR71XX_I2S_DATA_WORD_32);
++		conf |= AR71XX_I2S_I2S_WORD_SIZE;
++		conf |= AR71XX_I2S_MIC_WORD_SIZE;
 +		i2s_word_size = 32;
 +		break;
++
 +	default:
 +		return -EINVAL;
 +	}
-+
-+	/* Set PCM swap */
-+	//TODO
-+	// set bit according to SNDRV_PCM_FORMAT (BE or LE)
-+
-+	/* Set input (mic) word size */
-+	//TODO
-+	// 1 = 32 Bit
-+	conf |= AR71XX_I2S_MIC_WORD_SIZE;
 +
 +	/* Set Stereo/Mono */
 +	switch (params_channels(params)) {
@@ -566,17 +450,9 @@
 +		return -EINVAL;
 +	}
 +
-+	/* Set internal data word size */
-+	//TODO
-+	conf |= AR71XX_I2S_DATA_WORD_SIZE(AR71XX_I2S_DATA_WORD_32);
-+
-+	/* Set output (I2S DAC) word size */
-+	//TODO
-+	// 1 = 32 Bit
-+	conf |= AR71XX_I2S_I2S_WORD_SIZE;
 +
 +	/* Write configurations to register */
-+	regmap_write(dev->i2s_regmap, AR71XX_I2S_STEREO0_CONFIG, conf);
++	regmap_update_bits(dev->i2s_regmap, AR71XX_I2S_STEREO0_CONFIG, conf, conf);
 +
 +
 +	mclk_frequency = sampling_rate * mclk_ratio * 2; // TODO find out where the 2 comes from. what a mistery! 
@@ -594,9 +470,13 @@
 +	regmap_write(dev->i2s_regmap, AR71XX_I2S_STEREO0_CLK_DIV,
 +			AR71XX_I2S_DIV_INT(divi) | AR71XX_I2S_DIV_FRAC(divf));
 +
++	//TODO do only one write to STEREO0_CONFIG
 +	/* Set posedge */
 +	regmap_update_bits(dev->i2s_regmap, AR71XX_I2S_STEREO0_CONFIG,
 +			AR71XX_I2S_POSEDGE_MASK, AR71XX_I2S_POSEDGE(posedge));
++
++
++	ar71xx_stereo_reset(dev);
 +
 +	//TODO these registers might be in the MBOX
 +	//leave it empty for now as we only care about the clock
@@ -616,41 +496,13 @@
 +	/* Clear FIFOs */
 +	ar71xx_i2s_clear_fifos(dev, true, true);
 +#endif
++
++	printk("return 0 of hw_params\n");
 +	return 0;
 +
 +}
-+
-+static int ar71xx_i2s_prepare(struct snd_pcm_substream *substream,
-+		struct snd_soc_dai *dai)
-+{
-+	struct ar71xx_i2s_dev *dev = snd_soc_dai_get_drvdata(dai);
-+	//uint32_t conf_reg;
-+
-+	printk("called prepare\n");
-+	
-+
-+	ar71xx_i2s_start_clock(dev);
 +
 +#if 0
-+	/*
-+	 * Clear both FIFOs if the one that should be started
-+	 * is not empty at the moment. This should only happen
-+	 * after overrun. Otherwise, hw_params would have cleared
-+	 * the FIFO.
-+	 */
-+	regmap_read(dev->i2s_regmap, AR71XX_I2S_CS_A_REG, &cs_reg);
-+
-+	if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK
-+			&& !(cs_reg & AR71XX_I2S_TXE))
-+		ar71xx_i2s_clear_fifos(dev, true, false);
-+	else if (substream->stream == SNDRV_PCM_STREAM_CAPTURE
-+			&& (cs_reg & AR71XX_I2S_RXD))
-+		ar71xx_i2s_clear_fifos(dev, false, true);
-+
-+#endif
-+	return 0;
-+}
-+
 +static void ar71xx_i2s_stop(struct ar71xx_i2s_dev *dev,
 +		struct snd_pcm_substream *substream,
 +		struct snd_soc_dai *dai)
@@ -673,38 +525,11 @@
 +	if (!dai->active && !(dev->fmt & SND_SOC_DAIFMT_CONT))
 +		ar71xx_i2s_stop_clock(dev);
 +}
++#endif
 +
 +static int ar71xx_i2s_trigger(struct snd_pcm_substream *substream, int cmd,
 +			       struct snd_soc_dai *dai)
 +{
-+	struct ar71xx_i2s_dev *dev = snd_soc_dai_get_drvdata(dai);
-+	//uint32_t mask;
-+
-+	switch (cmd) {
-+	case SNDRV_PCM_TRIGGER_START:
-+	case SNDRV_PCM_TRIGGER_RESUME:
-+	case SNDRV_PCM_TRIGGER_PAUSE_RELEASE:
-+		ar71xx_i2s_start_clock(dev);
-+#if 0
-+		if (substream->stream == SNDRV_PCM_STREAM_CAPTURE)
-+			mask = AR71XX_I2S_RXON;
-+		else
-+			mask = AR71XX_I2S_TXON;
-+
-+		regmap_update_bits(dev->i2s_regmap,
-+				AR71XX_I2S_CS_A_REG, mask, mask);
-+#endif
-+		break;
-+
-+	case SNDRV_PCM_TRIGGER_STOP:
-+	case SNDRV_PCM_TRIGGER_SUSPEND:
-+	case SNDRV_PCM_TRIGGER_PAUSE_PUSH:
-+		ar71xx_i2s_stop(dev, substream, dai);
-+		break;
-+	default:
-+		return -EINVAL;
-+	}
-+
 +	return 0;
 +}
 +
@@ -716,28 +541,26 @@
 +	
 +	printk("called startup\n");
 +
-+	if (dai->active)
-+		return 0;
++	/* Route the i2s pins to the gpios */
++	regmap_update_bits(dev->gpio_regmap, 
++		AR71XX_GPIO_FUNCTION,
++		AR71XX_GPIO_FUNCTION_I2SO_22_18_EN |
++			AR71XX_GPIO_FUNCTION_I2S_MCKEN |
++			AR71XX_GPIO_FUNCTION_I2SO_EN,
++		AR71XX_GPIO_FUNCTION_I2SO_22_18_EN |
++			AR71XX_GPIO_FUNCTION_I2S_MCKEN |
++			AR71XX_GPIO_FUNCTION_I2SO_EN);
 +
-+	/* Should this still be running stop it */
-+	ar71xx_i2s_stop_clock(dev);
 +
-+	//TODO I2S block can't be enabled i think...
-+#if 0
-+	/* Enable PCM block */
-+	regmap_update_bits(dev->i2s_regmap, AR71XX_I2S_STEREO0_CONFIG,
-+			AR71XX_I2S_ENABLE, AR71XX_I2S_ENABLE);
-+#endif
-+
-+//no standby regs available
-+#if 0
-+	/*
-+	 * Disable STBY.
-+	 * Requires at least 4 PCM clock cycles to take effect.
-+	 */
-+	regmap_update_bits(dev->i2s_regmap, AR71XX_I2S_CS_A_REG,
-+			AR71XX_I2S_STBY, AR71XX_I2S_STBY);
-+#endif
++	if (!dai->active) {
++		regmap_write(dev->i2s_regmap, AR71XX_I2S_STEREO0_CONFIG, 
++			  AR71XX_I2S_SPDIF_ENABLE 
++			| AR71XX_I2S_ENABLE
++			| AR71XX_I2S_SAMPLE_CNT_CLEAR_TYPE
++			| AR71XX_I2S_MASTER);
++	
++		ar71xx_stereo_reset(dev);
++	}
 +
 +	return 0;
 +}
@@ -749,24 +572,15 @@
 +	
 +	printk("called shutdown\n");
 +
-+	ar71xx_i2s_stop(dev, substream, dai);
-+
 +	/* If both streams are stopped, disable module and clock */
-+	if (dai->active)
-+		return;
-+
-+	//TODO see startup
-+#if 0
-+	/* Disable the module */
-+	regmap_update_bits(dev->i2s_regmap, AR71XX_I2S_STEREO0_CONFIG,
-+			AR71XX_I2S_ENABLE, 0);
-+#endif
-+
-+	/*
-+	 * Stopping clock is necessary, because stop does
-+	 * not stop the clock when SND_SOC_DAIFMT_CONT
-+	 */
-+	ar71xx_i2s_stop_clock(dev);
++	if (dai->active) {
++		printk("setting STEREO0_CONFIG to 0x00\n");
++		regmap_write(dev->i2s_regmap, AR71XX_I2S_STEREO0_CONFIG, 0x00);
++		ar71xx_stereo_reset(dev);
++	} else { //XXX force stopping for now
++		regmap_write(dev->i2s_regmap, AR71XX_I2S_STEREO0_CONFIG, 0x00);
++		ar71xx_stereo_reset(dev);
++	}
 +}
 +
 +
@@ -774,10 +588,9 @@
 +
 +	.startup	= ar71xx_i2s_startup,
 +	.shutdown	= ar71xx_i2s_shutdown,
-+	.prepare	= ar71xx_i2s_prepare,
 +	.trigger	= ar71xx_i2s_trigger,
 +	.hw_params	= ar71xx_i2s_hw_params,
-+	.set_fmt	= ar71xx_i2s_set_dai_fmt,
++	.set_fmt 	= ar71xx_i2s_set_dai_fmt,
 +
 +};
 +
@@ -794,24 +607,38 @@
 +static struct snd_soc_dai_driver ar71xx_i2s_dai = {
 +	//TODO check available formats on ar9331
 +	.name	= "ar71xx-i2s",
-+	.probe	= ar71xx_i2s_dai_probe,
++	.id	= 0,
++//	.probe	= ar71xx_i2s_dai_probe,
 +	.playback = {
 +		.channels_min = 2,
 +		.channels_max = 2,
-+		.rates =	SNDRV_PCM_RATE_8000_192000,
-+		.formats =	SNDRV_PCM_FMTBIT_S16_LE
-+				| SNDRV_PCM_FMTBIT_S24_LE
-+				| SNDRV_PCM_FMTBIT_S32_LE
++		.rates =	SNDRV_PCM_RATE_44100 |
++		                SNDRV_PCM_RATE_48000 |
++		                SNDRV_PCM_RATE_88200 |
++		                SNDRV_PCM_RATE_96000,
++		.formats =	SNDRV_PCM_FMTBIT_S8 |
++				SNDRV_PCM_FMTBIT_S16_BE |
++				SNDRV_PCM_FMTBIT_S16_LE |
++				//TODO QCA driver says 32 bit is really noisy. has to be tested
++				SNDRV_PCM_FMTBIT_S24_BE |
++				SNDRV_PCM_FMTBIT_S24_LE |
++				SNDRV_PCM_FMTBIT_S32_BE |
++				SNDRV_PCM_FMTBIT_S32_LE
 +		},
 +	.capture = {
 +		.channels_min = 2,
 +		.channels_max = 2,
-+		.rates =	SNDRV_PCM_RATE_8000_192000,
-+		.formats =	SNDRV_PCM_FMTBIT_S16_LE
-+				| SNDRV_PCM_FMTBIT_S32_LE
-+		},
++		.rates =	SNDRV_PCM_RATE_44100 |
++		                SNDRV_PCM_RATE_48000 |
++		                SNDRV_PCM_RATE_88200 |
++		                SNDRV_PCM_RATE_96000,
++		.formats =	SNDRV_PCM_FMTBIT_S16_BE |
++				SNDRV_PCM_FMTBIT_S16_LE |
++				SNDRV_PCM_FMTBIT_S32_BE |
++				SNDRV_PCM_FMTBIT_S32_LE 
++		}, 
 +	.ops = &ar71xx_i2s_dai_ops,
-+	.symmetric_rates = 1
++	.symmetric_rates = 1 //TODO whats this??
 +};
 +
 +#if 0
@@ -862,15 +689,6 @@
 +		//.volatile_reg = ar71xx_i2s_volatile_reg,
 +		.cache_type = REGCACHE_RBTREE,
 +	},
-+	/* MBOX DMA Registers */
-+	{
-+		.reg_bits = 32,
-+		.reg_stride = 4,
-+		.val_bits = 32,
-+		.max_register = AR71XX_SLIC_MBOX_FIFO_RESET,
-+		//.volatile_reg = ar71xx_clk_volatile_reg,
-+		.cache_type = REGCACHE_RBTREE,
-+	},
 +	/* GPIO Registers (only GPIO Function) */
 +	{
 +		.reg_bits = 32,
@@ -887,6 +705,8 @@
 +	.name		= "ar71xx-i2s-comp",
 +};
 +
++//do in ar71xx_pcm.c
++#if 0
 +static const struct snd_pcm_hardware ar71xx_pcm_hardware = {
 +	.info			= SNDRV_PCM_INFO_INTERLEAVED |
 +				  SNDRV_PCM_INFO_JOINT_DUPLEX,
@@ -905,6 +725,7 @@
 +	.pcm_hardware = &ar71xx_pcm_hardware,
 +	.prealloc_buffer_size = 256 * PAGE_SIZE,
 +};
++#endif
 +
 +
 +static int ar71xx_i2s_probe(struct platform_device *pdev)
@@ -912,18 +733,19 @@
 +	struct ar71xx_i2s_dev *dev;
 +	int i;
 +	int ret;
-+	struct regmap *regmap[3];
-+	struct resource *mem[3];
++	struct regmap *regmap[2];
++	struct resource *mem[2];
 +
 +
 +	printk("started probe\n");
-+	
++
 +
 +	/* Request ioareas */
-+	for (i = 0; i < 3; i++) {
++	for (i = 0; i < 2; i++) {
 +		void __iomem *base;
 +
 +		mem[i] = platform_get_resource(pdev, IORESOURCE_MEM, i);
++
 +		base = devm_ioremap_resource(&pdev->dev, mem[i]);
 +		if (IS_ERR(base))
 +			return PTR_ERR(base);
@@ -942,10 +764,10 @@
 +		return PTR_ERR(dev);
 +
 +	dev->i2s_regmap = regmap[0];
-+	dev->mbox_regmap = regmap[1];
-+	dev->gpio_regmap = regmap[2];
++	dev->gpio_regmap = regmap[1];
 +
 +
++#if 0
 +	/* Set the DMA address */
 +	dev->dma_data[SNDRV_PCM_STREAM_PLAYBACK].addr =
 +		(dma_addr_t)AR71XX_I2S_FIFO_PHYSICAL_ADDR;
@@ -969,14 +791,10 @@
 +	dev->dma_data[SNDRV_PCM_STREAM_PLAYBACK].maxburst = 2;
 +	dev->dma_data[SNDRV_PCM_STREAM_CAPTURE].maxburst = 2;
 +	
-+	//XXX
-+	/* Set name */
-+	dev->dma_data[SNDRV_PCM_STREAM_PLAYBACK].chan_name = "playback_channel";
-+	dev->dma_data[SNDRV_PCM_STREAM_CAPTURE].chan_name = "capture_channel";
-+
 +	/* BCLK ratio - use default */
 +	dev->bclk_ratio = 0;
 +
++#endif
 +	/* Store the pdev */
 +	dev->dev = &pdev->dev;
 +	dev_set_drvdata(&pdev->dev, dev);
@@ -991,6 +809,7 @@
 +		return ret;
 +	}
 +
++#if 0
 +	ret = snd_dmaengine_pcm_register(&pdev->dev,
 +				&ar71xx_dmaengine_pcm_config,
 +				SND_DMAENGINE_PCM_FLAG_COMPAT);
@@ -999,6 +818,7 @@
 +		snd_soc_unregister_component(&pdev->dev);
 +		return ret;
 +	}
++#endif
 +
 +
 +	return 0;
@@ -1007,15 +827,15 @@
 +static int ar71xx_i2s_remove(struct platform_device *pdev)
 +{
 +	printk("called remove\n");
-+
-+	snd_dmaengine_pcm_unregister(&pdev->dev);
++	
++	//snd_dmaengine_pcm_unregister(&pdev->dev);
 +	snd_soc_unregister_component(&pdev->dev);
 +	return 0;
 +}
 +
 +static struct platform_driver ar71xx_i2s_driver = {
 +	.probe		= ar71xx_i2s_probe,
-+	.remove		= ar71xx_i2s_remove,
++	.remove		= __exit_p(ar71xx_i2s_remove),
 +	.driver		= {
 +		.name	= "ar71xx-i2s",
 +		.owner	= THIS_MODULE,
@@ -1069,7 +889,7 @@
  	 * DAI format configuration
 --- /dev/null
 +++ b/sound/soc/ar71xx/ar71xx-i2s.h
-@@ -0,0 +1,26 @@
+@@ -0,0 +1,43 @@
 +/*
 + * I2S configuration for sound cards. 
 + *
@@ -1092,6 +912,23 @@
 +
 +#ifndef AR71XX_I2S_H
 +#define AR71XX_I2S_H
++
++#include <linux/init.h>
++#include <linux/module.h>
++#include <linux/device.h>
++#include <linux/slab.h>
++#include <linux/delay.h>
++#include <linux/io.h>
++#include <linux/clk.h>
++
++#include <sound/core.h>
++#include <sound/pcm.h>
++#include <sound/pcm_params.h>
++#include <sound/initval.h>
++#include <sound/soc.h>
++
++//TODO check if needed
++#include <sound/dmaengine_pcm.h>
 +
 +
 +
@@ -1121,89 +958,62 @@
   * snd_soc_dai_set_clkdiv - configure DAI clock dividers.
   * @dai: DAI
   * @div_id: DAI specific clock divider ID
---- /dev/null
-+++ b/arch/mips/ath79/dev-i2s.c
-@@ -0,0 +1,23 @@
-+/*
-+ *  Atheros AR9331 I2S Audio support
-+ *
-+ *  Copyright (C) 2014 Felix Kramer <felixkramerroki@aol.com>
-+ *
-+ *  This program is free software; you can redistribute it and/or modify it
-+ *  under the terms of the GNU General Public License version 2 as published
-+ *  by the Free Software Foundation.
-+ */
-+
-+#include "dev-i2s.h"
-+
-+int __init ath79_register_i2s(struct platform_device *pdev)
-+{
-+	int ret;
-+
-+	ret = platform_device_register(pdev);
-+	if (ret)
-+		pr_debug("Unable to register platform devices '%s' %d\n",
-+		         pdev->name, ret);
-+
-+	return ret;
-+}
---- /dev/null
-+++ b/arch/mips/ath79/dev-i2s.h
-@@ -0,0 +1,21 @@
-+/*
-+ *  Atheros AR9331 I2S Audio support
-+ *
-+ *  Copyright (C) 2014 Felix Kramer <felixkramerroki@aol.com>
-+ *
-+ *  This program is free software; you can redistribute it and/or modify it
-+ *  under the terms of the GNU General Public License version 2 as published
-+ *  by the Free Software Foundation.
-+ */
-+
-+#ifndef _ATH79_DEV_I2S_H
-+#define _ATH79_DEV_I2S_H
-+
-+#include <linux/input.h>
-+#include <linux/platform_device.h>
-+
-+
-+int __init ath79_register_i2s(struct platform_device *pdev);
-+
-+
-+#endif /* _ATH79_DEV_I2S_H */
 --- a/arch/mips/ath79/mach-carambola2.c
 +++ b/arch/mips/ath79/mach-carambola2.c
 @@ -18,6 +18,7 @@
  #include "dev-spi.h"
  #include "dev-usb.h"
  #include "dev-wmac.h"
-+#include "dev-i2s.h"
++#include "dev-pcm.h"
  #include "machtypes.h"
  
  #define CARAMBOLA2_GPIO_LED_WLAN		0
-@@ -61,6 +62,49 @@ static struct gpio_keys_button carambola
+@@ -61,6 +62,72 @@ static struct gpio_keys_button carambola
  	},
  };
  
++#ifdef CONFIG_SND_SOC_AR71XX_PCM_MODULE
++static struct resource ar9331_pcm_resources[] = {
++	{
++		.start	= AR933X_MBOX_BASE,
++		.end	= AR933X_MBOX_BASE + AR933X_MBOX_SIZE,
++		.flags	= IORESOURCE_MEM,
++		.name	= "mbox-registers-pcm"
++	},
++	{
++		.start	= AR933X_RST_RESET_BASE,
++		.end	= AR933X_RST_RESET_BASE + AR933X_RST_RESET_SIZE,
++		.flags	= IORESOURCE_MEM,
++		.name	= "reset-registers-pcm"
++	},
++	{
++		.start	= AR933X_RST_MISC_INT_BASE,
++		.end	= AR933X_RST_MISC_INT_BASE + AR933X_RST_MISC_INT_SIZE,
++		.flags	= IORESOURCE_MEM,
++		.name	= "misc-int-registers-pcm"
++	},
++};
++
++static struct platform_device ar9331_pcm_device = {
++	.name		= "ar71xx-pcm",
++	.resource	= ar9331_pcm_resources,
++	.num_resources	= ARRAY_SIZE(ar9331_pcm_resources),
++};
++#endif
++
 +#ifdef CONFIG_SND_SOC_AR71XX_I2S_MODULE
 +static struct resource ar9331_i2s_resources[] = {
 +	{
 +		.start	= AR933X_I2S_BASE,
 +		.end	= AR933X_I2S_BASE + AR933X_I2S_SIZE,
 +		.flags	= IORESOURCE_MEM,
-+		.name	= "i2s-registers"
-+	},
-+	{
-+		.start	= AR933X_MBOX_BASE,
-+		.end	= AR933X_MBOX_BASE + AR933X_MBOX_SIZE,
-+		.flags	= IORESOURCE_MEM,
-+		.name	= "mbox-registers"
++		.name	= "i2s-registers-i2s"
 +	},
 +	{
 +		.start	= AR71XX_GPIO_BASE,
 +		.end	= AR71XX_GPIO_BASE + AR71XX_GPIO_SIZE,
 +		.flags	= IORESOURCE_MEM,
-+		.name	= "gpio-registers"
++		.name	= "gpio-registers-i2s"
 +	}
 +};
 +
@@ -1231,30 +1041,41 @@
  static void __init carambola2_common_setup(void)
  {
  	u8 *art = (u8 *) KSEG1ADDR(0x1fff0000);
-@@ -81,6 +125,17 @@ static void __init carambola2_common_set
+@@ -81,6 +148,22 @@ static void __init carambola2_common_set
  
  	/* WAN port */
  	ath79_register_eth(0);
 +
++#ifdef CONFIG_SND_SOC_AR71XX_PCM_MODULE
++	/* PCM module */
++	ath79_register_pcm(&ar9331_pcm_device);
++#endif
++
 +#ifdef CONFIG_SND_SOC_AR71XX_I2S_MODULE
 +	/* I2S module */
-+	ath79_register_i2s(&ar9331_i2s_device);
++	ath79_register_pcm(&ar9331_i2s_device);
 +#endif
 +
 +#if defined(CONFIG_SND_SOC_AR71XX_HIFIBERRY_DAC) || defined(CONFIG_SND_SOC_AR71XX_HIFIBERRY_DAC_MODULE)
 +	/* Hifiberry dac module */
-+	ath79_register_i2s(&snd_hifiberry_dac_device);
-+	ath79_register_i2s(&snd_pcm5102a_codec_device);
++	ath79_register_pcm(&snd_hifiberry_dac_device);
++	ath79_register_pcm(&snd_pcm5102a_codec_device);
 +#endif
  }
  
  static void __init carambola2_setup(void)
 --- a/arch/mips/include/asm/mach-ath79/ar71xx_regs.h
 +++ b/arch/mips/include/asm/mach-ath79/ar71xx_regs.h
-@@ -94,6 +94,10 @@
+@@ -94,6 +94,16 @@
  #define AR933X_WMAC_SIZE	0x20000
  #define AR933X_EHCI_BASE	0x1b000000
  #define AR933X_EHCI_SIZE	0x1000
++#define AR933X_RESET_BASE	(AR71XX_APB_BASE + 0x00060000)
++#define AR933X_RESET_SIZE	0xb0
++#define AR933X_RST_RESET_BASE	(AR71XX_APB_BASE + 0x0006001c)
++#define AR933X_RST_RESET_SIZE	0x00
++#define AR933X_RST_MISC_INT_BASE	(AR71XX_APB_BASE + 0x00060010)
++#define AR933X_RST_MISC_INT_SIZE	0x04
 +#define AR933X_I2S_BASE		(AR71XX_APB_BASE + 0x000B0000)
 +#define AR933X_I2S_SIZE		0x20
 +#define AR933X_MBOX_BASE	(AR71XX_APB_BASE + 0x000A0000)
@@ -1268,7 +1089,7 @@
  	select ATH79_DEV_M25P80
  	select ATH79_DEV_USB
  	select ATH79_DEV_WMAC
-+	select ATH79_DEV_I2S
++	select ATH79_DEV_PCM
  
  config ATH79_MACH_BHU_BXU2000N2_A
  	bool "BHU BXU2000n-2 rev. A support"
@@ -1276,7 +1097,7 @@
  config ATH79_DEV_USB
  	def_bool n
  
-+config ATH79_DEV_I2S
++config ATH79_DEV_PCM
 +	def_bool n
 +
  config ATH79_DEV_WMAC
@@ -1288,13 +1109,13 @@
  obj-$(CONFIG_ATH79_DEV_SPI)		+= dev-spi.o
  obj-$(CONFIG_ATH79_DEV_USB)		+= dev-usb.o
  obj-$(CONFIG_ATH79_DEV_WMAC)		+= dev-wmac.o
-+obj-$(CONFIG_ATH79_DEV_I2S)		+= dev-i2s.o
++obj-$(CONFIG_ATH79_DEV_PCM)		+= dev-pcm.o
  
  #
  # Miscellaneous objects
 --- /dev/null
 +++ b/sound/soc/ar71xx/hifiberry_dac.c
-@@ -0,0 +1,112 @@
+@@ -0,0 +1,117 @@
 +/*
 + * ASoC Driver for HifiBerry DAC
 + *
@@ -1335,14 +1156,19 @@
 +static int snd_rpi_hifiberry_dac_hw_params(struct snd_pcm_substream *substream,
 +				       struct snd_pcm_hw_params *params)
 +{
-+	printk("in dac_hw_params\n");
 +	struct snd_soc_pcm_runtime *rtd = substream->private_data;
 +	struct snd_soc_dai *cpu_dai = rtd->cpu_dai;
 +
 +	unsigned int sample_bits =
 +		snd_pcm_format_physical_width(params_format(params));
++	unsigned int fmt = 1;//TODO
 +
-+	return snd_soc_dai_set_bclk_ratio(cpu_dai, sample_bits * 2);
++	printk("in dac_hw_params\n");
++	
++
++	//return snd_soc_dai_set_bclk_ratio(cpu_dai, sample_bits * 2);
++	//return snd_soc_dai_set_fmt(cpu_dai, fmt);
++	return 0;
 +}
 +
 +/* machine stream operations */
@@ -1356,7 +1182,7 @@
 +	.stream_name	= "HifiBerry DAC HiFi",
 +	.cpu_dai_name	= "ar71xx-i2s.0",
 +	.codec_dai_name	= "pcm5102a-hifi",
-+	.platform_name	= "ar71xx-i2s.0",
++	.platform_name	= "ar71xx-pcm.0",
 +	.codec_name	= "pcm5102a-codec",
 +	.dai_fmt	= SND_SOC_DAIFMT_I2S | SND_SOC_DAIFMT_NB_NF |
 +				SND_SOC_DAIFMT_CBS_CFS,
@@ -1521,3 +1347,1243 @@
 +MODULE_DESCRIPTION("ASoC PCM5102A codec driver");
 +MODULE_AUTHOR("Florian Meier <florian.meier@koalo.de>");
 +MODULE_LICENSE("GPL v2");
+--- /dev/null
++++ b/sound/soc/ar71xx/ar71xx-mbox.c
+@@ -0,0 +1,368 @@
++/*
++ * ath79-mbox.c -- ALSA MBOX DMA management functions
++ *
++ * Copyright (c) 2013 Qualcomm Atheros, Inc.
++ *
++ * Permission to use, copy, modify, and/or distribute this software for any
++ * purpose with or without fee is hereby granted, provided that the above
++ * copyright notice and this permission notice appear in all copies.
++ *
++ * THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
++ * WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
++ * MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
++ * ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
++ * WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
++ * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
++ * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
++ */
++
++#include <linux/dma-mapping.h>
++#include <linux/types.h>
++#include <linux/dmapool.h>
++#include <linux/delay.h>
++#include <sound/core.h>
++#include <sound/pcm.h>
++#include <sound/soc.h>
++
++#include "ar71xx-pcm.h"
++
++spinlock_t ar71xx_pcm_lock;
++static struct dma_pool *ar71xx_pcm_cache;
++
++void ar71xx_mbox_reset(struct ar71xx_pcm_pltfm_priv *dev)
++{
++	//u32 t;
++	printk("in mbox_reset, dev: %p, dev->mbox_regmap: %p, dev->reset_regmap %p\n", 
++		dev, dev->mbox_regmap, dev->reset_regmap);
++
++	//TODO spin_lock needed?
++	//spin_lock(&ar71xx_pcm_lock);
++
++	regmap_update_bits(dev->reset_regmap, 
++			AR9331_RESET_RST_RESET,
++			AR9331_RESET_RST_RESET_MBOX,
++			AR9331_RESET_RST_RESET_MBOX);
++	
++	printk("in mbox_reset, after first regmap_update_bits\n");
++	//t = ar71xx_reset_rr(AR934X_RESET_REG_RESET_MODULE);
++	//t |= AR934X_RESET_MBOX;
++	//ath79_reset_wr(AR934X_RESET_REG_RESET_MODULE, t);
++	
++	udelay(50);
++	printk("in mbox_reset, after udelay\n");
++	//t &= ~(AR934X_RESET_MBOX);
++	//ath79_reset_wr(AR934X_RESET_REG_RESET_MODULE, t);
++	regmap_update_bits(dev->reset_regmap, 
++			AR9331_RESET_RST_RESET,
++			AR9331_RESET_RST_RESET_MBOX, 0);
++	printk("in mbox_reset, after second regmap_update_bits\n");
++
++	//spin_unlock(&ath79_pcm_lock);
++}
++
++void ar71xx_mbox_fifo_reset(bool rx, struct ar71xx_pcm_pltfm_priv *dev)
++{
++	printk("in mbox_fifo_reset\n");
++	if (rx) {
++	regmap_update_bits(dev->mbox_regmap, 
++			AR9331_MBOX_DMA_FIFO_RESET,
++			AR9331_MBOX_DMA_FIFO_RESET_RX_INIT,
++			AR9331_MBOX_DMA_FIFO_RESET_RX_INIT);
++	} else {
++	regmap_update_bits(dev->mbox_regmap, 
++			AR9331_MBOX_DMA_FIFO_RESET,
++			AR9331_MBOX_DMA_FIFO_RESET_TX_INIT,
++			AR9331_MBOX_DMA_FIFO_RESET_TX_INIT);
++	}
++
++	//ar71xx_dma_wr(AR934X_DMA_REG_MBOX_FIFO_RESET, mask);
++	udelay(50);
++	/* Datasheet says we should reset the stereo controller whenever
++	 * we reset the MBOX DMA controller */
++	
++	//TODO disable for now because its the wrong dev
++	// cont't know if the reset in the i2s register is enough
++//ar71xx_stereo_reset(dev);
++#if 0
++	regmap_write(dev->reset_regmap, 
++			AR9331_RESET_RST_RESET,
++			AR9331_RESET_RST_RESET_I2S);
++#endif
++}
++
++void ar71xx_mbox_interrupt_enable(u32 mask, struct ar71xx_pcm_pltfm_priv *dev)
++{
++	//u32 t;
++	u32 reg;
++
++	//TODO check if spin_lock is needed	
++	//spin_lock(&ath79_pcm_lock);
++
++	regmap_update_bits(dev->mbox_regmap, AR9331_MBOX_INT_ENABLE,
++			mask, mask);
++
++	regmap_update_bits(dev->misc_int_regmap, AR9331_RESET_RST_MISC_INT_MASK,
++			AR9331_RESET_RST_MISC_INT_MASK_MBOX,	
++			AR9331_RESET_RST_MISC_INT_MASK_MBOX);
++
++	//t = ath79_dma_rr(AR934X_DMA_REG_MBOX_INT_ENABLE);
++	//t |= mask;
++	//ath79_dma_wr(AR934X_DMA_REG_MBOX_INT_ENABLE, t);
++
++	//spin_unlock(&ath79_pcm_lock);
++}
++
++void ar71xx_mbox_interrupt_ack(u32 mask, struct ar71xx_pcm_pltfm_priv *dev)
++{
++	u32 reg;
++	//ath79_dma_wr(AR934X_DMA_REG_MBOX_INT_STATUS, mask);
++	regmap_write(dev->mbox_regmap, AR9331_MBOX_INT_STATUS, mask);
++	//not available on 9331
++	//ath79_reset_wr(AR71XX_RESET_REG_MISC_INT_STATUS, ~(MISC_INT_DMA));
++	/* Flush these two registers */
++	//ath79_dma_rr(AR934X_DMA_REG_MBOX_INT_STATUS);
++	regmap_read(dev->mbox_regmap, AR9331_MBOX_INT_STATUS, &reg);
++	//ath79_reset_rr(AR71XX_RESET_REG_MISC_INT_STATUS);
++}
++
++void ar71xx_mbox_dma_start(struct ar71xx_pcm_rt_priv *rtpriv, struct ar71xx_pcm_pltfm_priv *dev)
++{
++	u32 reg;
++	int timer;
++
++	printk("starting dma\n");
++
++	if (rtpriv->direction == SNDRV_PCM_STREAM_PLAYBACK) {
++		regmap_write(dev->mbox_regmap, 
++			AR9331_MBOX_DMA_RX_CONTROL, 
++			AR9331_MBOX_DMA_CONTROL_STOP);
++		regmap_write(dev->mbox_regmap, 
++			AR9331_MBOX_DMA_RX_CONTROL, 
++			AR9331_MBOX_DMA_CONTROL_START);
++
++		for(timer = 100; timer > 0; timer--) {
++			regmap_read(dev->mbox_regmap,
++				AR9331_MBOX_DMA_RX_CONTROL, &reg);
++			if(!reg) 
++				break;
++		}
++		printk("mbox start: %08x, timer=%d\n", reg, timer);
++		//ath79_dma_wr(AR934X_DMA_REG_MBOX0_DMA_RX_CONTROL,
++		//	     AR934X_DMA_MBOX_DMA_CONTROL_START);
++		//ath79_dma_rr(AR934X_DMA_REG_MBOX0_DMA_RX_CONTROL);
++	} else {
++		regmap_write(dev->mbox_regmap, 
++			AR9331_MBOX_DMA_TX_CONTROL, 
++			AR9331_MBOX_DMA_CONTROL_STOP);
++		regmap_write(dev->mbox_regmap, 
++			AR9331_MBOX_DMA_TX_CONTROL, 
++			AR9331_MBOX_DMA_CONTROL_START);
++
++		for(timer = 100; timer > 0; timer--) {
++			regmap_read(dev->mbox_regmap,
++				AR9331_MBOX_DMA_TX_CONTROL, &reg);
++			if(!reg) 
++				break;
++		}
++		printk("mbox start: %08x, timer=%d\n", reg, timer);
++		//ath79_dma_wr(AR934X_DMA_REG_MBOX0_DMA_TX_CONTROL,
++		//	     AR934X_DMA_MBOX_DMA_CONTROL_START);
++		//ath79_dma_rr(AR934X_DMA_REG_MBOX0_DMA_TX_CONTROL);
++	}
++
++}
++
++void ar71xx_mbox_dma_stop(struct ar71xx_pcm_rt_priv *rtpriv, struct ar71xx_pcm_pltfm_priv *dev)
++{
++	u32 reg;
++
++	printk("stopping dma\n");
++
++	if (rtpriv->direction == SNDRV_PCM_STREAM_PLAYBACK) {
++		regmap_write(dev->mbox_regmap, 
++			AR9331_MBOX_DMA_RX_CONTROL, 
++			AR9331_MBOX_DMA_CONTROL_STOP);
++		regmap_read(dev->mbox_regmap,
++			AR9331_MBOX_DMA_RX_CONTROL, &reg);
++	} else {
++		regmap_write(dev->mbox_regmap, 
++			AR9331_MBOX_DMA_TX_CONTROL, 
++			AR9331_MBOX_DMA_CONTROL_STOP);
++		regmap_read(dev->mbox_regmap,
++			AR9331_MBOX_DMA_TX_CONTROL, &reg);
++	}
++	printk("mbox stop: %08x\n", reg);
++
++	/* Delay for the dynamically calculated max time based on
++	sample size, channel, sample rate + margin to ensure that the
++	DMA engine will be truly idle. */
++
++	mdelay(rtpriv->delay_time);
++}
++
++void ar71xx_mbox_dma_reset(struct ar71xx_pcm_pltfm_priv *dev)
++{
++	printk("in mbox_dma_reset, dev: %p\n", dev);	
++	ar71xx_mbox_reset(dev);
++
++	/* reset both fifos */
++	ar71xx_mbox_fifo_reset(true, dev);
++	ar71xx_mbox_fifo_reset(false, dev);
++}
++
++void ar71xx_mbox_dma_prepare(struct ar71xx_pcm_rt_priv *rtpriv, struct ar71xx_pcm_pltfm_priv *dev)
++{
++	struct ar71xx_pcm_desc *desc;
++	//u32 reg;
++
++	if (rtpriv->direction == SNDRV_PCM_STREAM_PLAYBACK) {
++		/* Request the DMA channel to the controller */
++		//t = ath79_dma_rr(AR934X_DMA_REG_MBOX_DMA_POLICY);
++		regmap_update_bits(dev->mbox_regmap, 
++				AR9331_MBOX_DMA_POLICY,
++				AR9331_MBOX_DMA_POLICY_RX_QUANTUM |
++				AR9331_MBOX_DMA_POLICY_TX_FIFO_THRESH(6),
++				AR9331_MBOX_DMA_POLICY_RX_QUANTUM |
++				AR9331_MBOX_DMA_POLICY_TX_FIFO_THRESH(6));
++		//ath79_dma_wr(AR934X_DMA_REG_MBOX_DMA_POLICY,
++		//	     t | AR934X_DMA_MBOX_DMA_POLICY_RX_QUANTUM |
++		//	     (6 << AR934X_DMA_MBOX_DMA_POLICY_TX_FIFO_THRESH_SHIFT));
++
++		/* The direction is indicated from the DMA engine perspective
++		 * i.e. we'll be using the RX registers for Playback and
++		 * the TX registers for capture */
++		desc = list_first_entry(&rtpriv->dma_head, struct ar71xx_pcm_desc, list);
++		//regmap_read(dev->mbox_regmap, AR9331_MBOX_DMA_RX_DESCRIPTOR_BASE, &reg);
++		//desc->phys = reg;
++		regmap_write(dev->mbox_regmap, AR9331_MBOX_DMA_RX_DESCRIPTOR_BASE, (u32)desc->phys);
++		//ath79_dma_wr(AR934X_DMA_REG_MBOX0_DMA_RX_DESCRIPTOR_BASE,
++		//		(u32) desc->phys);
++		ar71xx_mbox_interrupt_enable(AR9331_MBOX_INT_ENABLE_RX_DMA_COMPLETE, dev);
++	} else {
++		/* Request the DMA channel to the controller */
++		//t = ath79_dma_rr(AR934X_DMA_REG_MBOX_DMA_POLICY);
++		regmap_update_bits(dev->mbox_regmap, 
++				AR9331_MBOX_DMA_POLICY,
++				AR9331_MBOX_DMA_POLICY_TX_QUANTUM |
++				AR9331_MBOX_DMA_POLICY_TX_FIFO_THRESH(6),
++				AR9331_MBOX_DMA_POLICY_TX_QUANTUM |
++				AR9331_MBOX_DMA_POLICY_TX_FIFO_THRESH(6));
++		//ath79_dma_wr(AR934X_DMA_REG_MBOX_DMA_POLICY,
++		//	     t | AR934X_DMA_MBOX_DMA_POLICY_TX_QUANTUM |
++		//	     (6 << AR934X_DMA_MBOX_DMA_POLICY_TX_FIFO_THRESH_SHIFT));
++
++		desc = list_first_entry(&rtpriv->dma_head, struct ar71xx_pcm_desc, list);
++		//regmap_read(dev->mbox_regmap, AR9331_MBOX_DMA_TX_DESCRIPTOR_BASE, &reg);
++		//desc->phys = reg;
++		regmap_write(dev->mbox_regmap, AR9331_MBOX_DMA_RX_DESCRIPTOR_BASE, (u32)desc->phys);
++		//ath79_dma_wr(AR934X_DMA_REG_MBOX0_DMA_TX_DESCRIPTOR_BASE,
++		//		(u32) desc->phys);
++		ar71xx_mbox_interrupt_enable(AR9331_MBOX_INT_ENABLE_TX_DMA_COMPLETE, dev);
++	}
++
++	// XXX enable all mbox interrupts!
++#if 1
++	u32 int_en = AR9331_MBOX_INT_ENABLE_TX_DMA_EOM_COMPLETE |
++			AR9331_MBOX_INT_ENABLE_TX_OVERFLOW |
++			AR9331_MBOX_INT_ENABLE_RX_UNDERFLOW |
++			AR9331_MBOX_INT_ENABLE_TX_NOT_EMPTY |
++			AR9331_MBOX_INT_ENABLE_RX_NOT_FULL;
++	ar71xx_mbox_interrupt_enable(int_en, dev);
++#endif
++
++	printk("mbox_dma_prepare, descriptor base: %08x\n", (u32)desc->phys);
++}
++
++int ar71xx_mbox_dma_map(struct ar71xx_pcm_rt_priv *rtpriv, dma_addr_t baseaddr,
++			      int period_bytes, int bufsize)
++{
++	struct list_head *head = &rtpriv->dma_head;
++	struct ar71xx_pcm_desc *desc, *prev;
++	dma_addr_t desc_p;
++	unsigned int offset = 0;
++
++	spin_lock(&ar71xx_pcm_lock);
++
++	rtpriv->elapsed_size = 0;
++	/* We loop until we have enough buffers to map the requested DMA area */
++	do {
++		/* Allocate a descriptor and insert it into the DMA ring */
++		desc = dma_pool_alloc(ar71xx_pcm_cache, GFP_KERNEL, &desc_p);
++		if(!desc) {
++			return -ENOMEM;
++		}
++		memset(desc, 0, sizeof(struct ar71xx_pcm_desc));
++		desc->phys = desc_p;
++		list_add_tail(&desc->list, head);
++
++		desc->OWN = 1;
++		desc->rsvd1 = desc->rsvd2 = desc->rsvd3 = desc->EOM = 0;
++
++		/* buffer size may not be a multiple of period_bytes */
++		if (bufsize >= offset + period_bytes) {
++			desc->size = period_bytes;
++		} else {
++			desc->size = bufsize - offset;
++		}
++		desc->BufPtr = baseaddr + offset;
++
++		/* For now, we assume the buffer is always full
++		 * -->length == size */
++		desc->length = desc->size;
++
++			/* We need to make sure we are not the first descriptor.
++		 * If we are, prev doesn't point to a struct ath79_pcm_desc */
++		if (desc->list.prev != head) {
++			prev =
++			    list_entry(desc->list.prev, struct ar71xx_pcm_desc,
++				       list);
++			prev->NextPtr = desc->phys;
++		}
++
++		offset += desc->size;
++	} while (offset < bufsize);
++
++	/* Once all the descriptors have been created, we can close the loop
++	 * by pointing from the last one to the first one */
++	desc = list_first_entry(head, struct ar71xx_pcm_desc, list);
++	prev = list_entry(head->prev, struct ar71xx_pcm_desc, list);
++	prev->NextPtr = desc->phys;
++
++	spin_unlock(&ar71xx_pcm_lock);
++
++	return 0;
++}
++
++void ar71xx_mbox_dma_unmap(struct ar71xx_pcm_rt_priv *rtpriv)
++{
++	struct list_head *head = &rtpriv->dma_head;
++	struct ar71xx_pcm_desc *desc, *n;
++
++	spin_lock(&ar71xx_pcm_lock);
++	list_for_each_entry_safe(desc, n, head, list) {
++		list_del(&desc->list);
++		dma_pool_free(ar71xx_pcm_cache, desc, desc->phys);
++	}
++	spin_unlock(&ar71xx_pcm_lock);
++
++	return;
++}
++
++int ar71xx_mbox_dma_init(struct device *dev)
++{
++	int ret = 0;
++
++	/* Allocate a DMA pool to store the MBOX descriptor */
++	ar71xx_pcm_cache = dma_pool_create("ar71xx_pcm_pool", dev,
++					 sizeof(struct ar71xx_pcm_desc), 4, 0);
++	if (!ar71xx_pcm_cache)
++		ret = -ENOMEM;
++
++	return ret;
++}
++
++void ar71xx_mbox_dma_exit(void)
++{
++	dma_pool_destroy(ar71xx_pcm_cache);
++	ar71xx_pcm_cache = NULL;
++}
+--- /dev/null
++++ b/sound/soc/ar71xx/ar71xx-pcm.c
+@@ -0,0 +1,631 @@
++/*
++ * ath-pcm.c -- ALSA PCM interface for the QCA Wasp based audio interface
++ *
++ * Copyright (c) 2013 Qualcomm Atheros, Inc.
++ *
++ * Permission to use, copy, modify, and/or distribute this software for any
++ * purpose with or without fee is hereby granted, provided that the above
++ * copyright notice and this permission notice appear in all copies.
++ *
++ * THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
++ * WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
++ * MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
++ * ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
++ * WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
++ * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
++ * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
++ */
++
++#include <linux/dma-mapping.h> //dma api (eg. dma_alloc_coherent(..)
++#include <linux/types.h>
++#include <linux/module.h>
++#include <linux/slab.h>
++//#include <asm/mach-ath79/irq.h> //TODO test if available here
++
++//#include "ar71xx_regs.h" //TODO currently registers in ar71xx-i2s.h maybe move to ar71xx-pcm.h
++//#include "ath79.h" // naaaa
++
++#include <linux/mm.h>
++
++#include <sound/core.h>
++#include <sound/soc.h>
++#include <sound/pcm_params.h>
++
++#include "ar71xx-pcm.h"
++//#include "ar71xx-i2s.h"
++
++
++#define BUFFER_BYTES_MAX 16 * 4095 * 16
++#define PERIOD_BYTES_MIN 64
++
++
++
++static struct snd_pcm_hardware ar71xx_pcm_hardware = {
++	.info = SNDRV_PCM_INFO_MMAP |
++		SNDRV_PCM_INFO_MMAP_VALID |
++		SNDRV_PCM_INFO_INTERLEAVED |
++		SNDRV_PCM_INFO_NO_PERIOD_WAKEUP,
++	.formats = SNDRV_PCM_FMTBIT_S8 |
++			SNDRV_PCM_FMTBIT_S16_BE | SNDRV_PCM_FMTBIT_S16_LE |
++			SNDRV_PCM_FMTBIT_S24_BE | SNDRV_PCM_FMTBIT_S24_LE |
++			SNDRV_PCM_FMTBIT_S32_BE | SNDRV_PCM_FMTBIT_S32_LE,
++	.rates = SNDRV_PCM_RATE_22050 |
++			SNDRV_PCM_RATE_32000 |
++			SNDRV_PCM_RATE_44100 |
++			SNDRV_PCM_RATE_48000 |
++			SNDRV_PCM_RATE_88200 |
++			SNDRV_PCM_RATE_96000,
++	.rate_min = 22050,
++	.rate_max = 96000,
++	.channels_min = 2,
++	.channels_max = 2,
++	/* These numbers are empirical. As the DMA engine is descriptor base
++	 * the only real limitation we have is the amount of RAM.
++	 * Ideally, we'd need to find the best tradeoff between number of descs
++	 * and CPU load */
++
++	.buffer_bytes_max = BUFFER_BYTES_MAX,
++	.period_bytes_min = PERIOD_BYTES_MIN,
++	.period_bytes_max = 4095,
++	.periods_min = 16,
++	.periods_max = 256,
++	.fifo_size = 0,
++};
++
++static irqreturn_t ar71xx_pcm_interrupt(int irq, void *dev_id)
++{
++	//printk("interrupt\n");
++	uint32_t status;
++	struct ar71xx_pcm_pltfm_priv *prdata = dev_id;
++	struct ar71xx_pcm_rt_priv *rtpriv;
++	unsigned int period_bytes;
++
++
++	//XXX look for error interrupts
++	const uint32_t mystatus = AR9331_MBOX_INT_ENABLE_TX_DMA_EOM_COMPLETE |
++				AR9331_MBOX_INT_ENABLE_TX_OVERFLOW |
++				AR9331_MBOX_INT_ENABLE_RX_UNDERFLOW |
++				AR9331_MBOX_INT_ENABLE_TX_NOT_EMPTY |
++				AR9331_MBOX_INT_ENABLE_RX_NOT_FULL;
++
++	regmap_read(prdata->mbox_regmap, AR9331_MBOX_INT_STATUS, &status);
++	
++
++	/* RX DMA is enabled */
++	if(status & AR9331_MBOX_INT_ENABLE_RX_DMA_COMPLETE) {
++		unsigned int played_size;
++		rtpriv = prdata->playback->runtime->private_data;
++
++		/* Store the last played buffer in the runtime priv struct */
++		rtpriv->last_played = ar71xx_pcm_get_last_played(rtpriv);
++		period_bytes = snd_pcm_lib_period_bytes(prdata->playback);
++
++
++		played_size = ar71xx_pcm_set_own_bits(rtpriv);
++		if(played_size > period_bytes)
++			snd_printd("Played more than one period  bytes played: %d\n",played_size);
++		rtpriv->elapsed_size += played_size;
++		ar71xx_mbox_interrupt_ack(AR9331_MBOX_INT_ENABLE_RX_DMA_COMPLETE, prdata);
++		if(rtpriv->elapsed_size >= period_bytes)
++		{
++			rtpriv->elapsed_size %= period_bytes;
++			snd_pcm_period_elapsed(prdata->playback);
++		}
++
++		if (rtpriv->last_played == NULL) {
++			snd_printd("BUG: ISR called but no played buf found\n");
++			goto ack;
++		}
++
++	}
++	if(status & AR9331_MBOX_INT_ENABLE_TX_DMA_COMPLETE) {
++		rtpriv = prdata->capture->runtime->private_data;
++
++		/* Store the last played buffer in the runtime priv struct */
++		rtpriv->last_played = ar71xx_pcm_get_last_played(rtpriv);
++		ar71xx_pcm_set_own_bits(rtpriv);
++		ar71xx_mbox_interrupt_ack(AR9331_MBOX_INT_ENABLE_TX_DMA_COMPLETE, prdata);
++
++		if (rtpriv->last_played == NULL) {
++			snd_printd("BUG: ISR called but no rec buf found\n");
++			goto ack;
++		}
++		snd_pcm_period_elapsed(prdata->capture);
++	}
++	if(status & mystatus) {
++		printk("***interrupt error***, value:%08x\n", status);
++		ar71xx_mbox_interrupt_ack(status, prdata);
++	}
++
++ack:
++	return IRQ_HANDLED;
++}
++
++static int ar71xx_pcm_open(struct snd_pcm_substream *ss)
++{
++	struct snd_soc_pcm_runtime *runtime = ss->private_data;
++	struct snd_soc_platform *platform = runtime->platform;
++	struct ar71xx_pcm_pltfm_priv *prdata = snd_soc_platform_get_drvdata(platform);
++	struct ar71xx_pcm_rt_priv *rtpriv;
++	int err;
++
++	printk("in pcm_open()\n");
++
++
++#if 1
++	/* setup new platform private struct (input and output pcm substream) */
++	//XXX 
++	//prdata = kzalloc(sizeof(struct ar71xx_pcm_pltfm_priv), GFP_KERNEL);
++	//if (prdata == NULL)
++	//	return -ENOMEM;
++	//snd_soc_platform_set_drvdata(platform, prdata);
++
++	if (!prdata->irq_en) {
++		err = request_irq(ATH79_MISC_IRQ(7), ar71xx_pcm_interrupt, 0,
++				  "ar71xx-pcm-interrupt", prdata);
++
++		if (err) {
++			//TODO kfree needed?
++			//kfree(prdata);
++			return -EBUSY;
++		}
++		prdata->irq_en = true;
++		printk("requested interrupt\n");
++	}
++
++	//snd_soc_platform_set_drvdata(platform, prdata);
++//	}
++#endif
++
++	/* setup substream */
++	if (ss->stream == SNDRV_PCM_STREAM_PLAYBACK) {
++		prdata->playback = ss;
++	} else {
++		prdata->capture = ss;
++	}
++
++	/* Allocate/Initialize the buffer linked list head */
++	rtpriv = kmalloc(sizeof(*rtpriv), GFP_KERNEL);
++	if (!rtpriv) {
++		return -ENOMEM;
++	}
++#if 0
++	snd_printd("%s: 0x%xB allocated at 0x%08x\n",
++	       __FUNCTION__, sizeof(*rtpriv), (u32) rtpriv);
++#endif
++	printk("%s: 0x%xB allocated at 0x%08x\n",
++	       __FUNCTION__, sizeof(*rtpriv), (u32) rtpriv);
++
++	ss->runtime->private_data = rtpriv;
++	rtpriv->last_played = NULL;
++	INIT_LIST_HEAD(&rtpriv->dma_head);
++	
++	/* TODO could be in previous if sequence ?? */
++	if(ss->stream == SNDRV_PCM_STREAM_PLAYBACK)
++		rtpriv->direction = SNDRV_PCM_STREAM_PLAYBACK;
++	else
++		rtpriv->direction = SNDRV_PCM_STREAM_CAPTURE;
++
++	snd_soc_set_runtime_hwparams(ss, &ar71xx_pcm_hardware);
++
++	return 0;
++}
++
++static int ar71xx_pcm_close(struct snd_pcm_substream *ss)
++{
++	struct snd_soc_pcm_runtime *runtime = ss->private_data;
++	struct snd_soc_platform *platform = runtime->platform;
++	struct ar71xx_pcm_pltfm_priv *prdata = snd_soc_platform_get_drvdata(platform);
++	struct ar71xx_pcm_rt_priv *rtpriv;
++
++	printk("in pcm_close\n");
++
++	if (!prdata)
++		return 0;
++
++	if (ss->stream == SNDRV_PCM_STREAM_PLAYBACK) {
++		prdata->playback = NULL;
++	} else {
++		prdata->capture = NULL;
++	}
++
++	if (!prdata->playback && !prdata->capture) {
++		free_irq(ATH79_MISC_IRQ(7), prdata);
++		kfree(prdata);
++		snd_soc_platform_set_drvdata(platform, NULL);
++	}
++	rtpriv = ss->runtime->private_data;
++	kfree(rtpriv);
++
++	return 0;
++}
++
++static int ar71xx_pcm_hw_params(struct snd_pcm_substream *ss,
++			      struct snd_pcm_hw_params *hw_params)
++{
++	struct snd_pcm_runtime *runtime = ss->runtime;
++	struct ar71xx_pcm_rt_priv *rtpriv;
++	int ret;
++	unsigned int period_size, sample_size, sample_rate, frames, channels;
++
++	printk("in pcm_hw_params\n");
++
++	// Does this routine need to handle new clock changes in the hw_params?
++	rtpriv = runtime->private_data;
++
++	ret = ar71xx_mbox_dma_map(rtpriv, ss->dma_buffer.addr,
++		params_period_bytes(hw_params), params_buffer_bytes(hw_params));
++
++	if(ret < 0)
++		return ret;
++
++	period_size = params_period_bytes(hw_params);
++	sample_size = snd_pcm_format_size(params_format(hw_params), 1);
++	sample_rate = params_rate(hw_params);
++	channels = params_channels(hw_params);
++	frames = period_size / (sample_size * channels);
++
++/* 	When we disbale the DMA engine, it could be just at the start of a descriptor.
++	Hence calculate the longest time the DMA engine could be grabbing bytes for to
++	Make sure we do not unmap the memory before the DMA is complete.
++	Add 10 mSec of margin. This value will be used in ath79_mbox_dma_stop */
++
++	rtpriv->delay_time = (frames * 1000)/sample_rate + 10;
++
++
++	snd_pcm_set_runtime_buffer(ss, &ss->dma_buffer);
++	runtime->dma_bytes = params_buffer_bytes(hw_params);
++
++	return 1;
++}
++
++static int ar71xx_pcm_hw_free(struct snd_pcm_substream *ss)
++{
++	struct snd_pcm_runtime *runtime = ss->runtime;
++	struct ar71xx_pcm_rt_priv *rtpriv;
++	
++	printk("in pcm_hw_free -> %s\n", ss->name);
++
++	rtpriv = runtime->private_data;
++	ar71xx_mbox_dma_unmap(rtpriv);
++	snd_pcm_set_runtime_buffer(ss, NULL);
++	return 0;
++}
++
++static int ar71xx_pcm_prepare(struct snd_pcm_substream *ss)
++{
++	struct snd_pcm_runtime *runtime = ss->runtime;
++	struct snd_soc_pcm_runtime *rtd = ss->private_data;
++	struct snd_soc_dai *cpu_dai;
++	struct ar71xx_pcm_rt_priv *rtpriv;
++
++	struct snd_soc_platform *platform = rtd->platform;
++	struct ar71xx_pcm_pltfm_priv *dev = dev_get_drvdata(platform->dev);
++
++
++	printk("in pcm_prepare, dev=%p, dev->mbox_regmap %p, dev->reset_regmap %p\n", 
++		dev, dev->mbox_regmap, dev->reset_regmap);
++
++
++	rtpriv = runtime->private_data;
++	cpu_dai = rtd->cpu_dai;
++
++	/* When setup the first stream should reset the DMA MBOX controller */
++	if(cpu_dai->active == 1) {
++		printk("cpu_dai->active == 1; doing and mbox_dma_reset\n");
++		ar71xx_mbox_dma_reset(dev);
++	}
++	
++	printk("doing mbox_dma_prepare\n");
++	ar71xx_mbox_dma_prepare(rtpriv, dev);
++	
++	printk("doing pcm_set_own_bits\n");
++	ar71xx_pcm_set_own_bits(rtpriv);
++	rtpriv->last_played = NULL;
++	
++	printk("pcm_prepare successfull\n");
++	return 0;
++}
++
++static int ar71xx_pcm_trigger(struct snd_pcm_substream *ss, int cmd)
++{
++	struct ar71xx_pcm_rt_priv *rtpriv = ss->runtime->private_data;
++
++	//TODO device??
++	struct snd_soc_pcm_runtime *rtd = ss->private_data;
++	struct snd_soc_platform *platform = rtd->platform;
++	struct ar71xx_pcm_pltfm_priv *dev = dev_get_drvdata(platform->dev);
++
++	printk("in pcm_trigger, dev=%p\n", dev);
++
++	switch (cmd) {
++	case SNDRV_PCM_TRIGGER_START:
++		ar71xx_mbox_dma_start(rtpriv, dev);
++		break;
++	case SNDRV_PCM_TRIGGER_STOP:
++		ar71xx_mbox_dma_stop(rtpriv, dev);
++		break;
++	default:
++		return -EINVAL;
++	}
++
++	return 0;
++}
++
++static snd_pcm_uframes_t ar71xx_pcm_pointer(struct snd_pcm_substream *ss)
++{
++	struct snd_pcm_runtime *runtime = ss->runtime;
++	struct ar71xx_pcm_rt_priv *rtpriv;
++	snd_pcm_uframes_t ret = 0;
++
++	rtpriv = runtime->private_data;
++
++	if(rtpriv->last_played == NULL)
++		ret = 0;
++	else
++		ret = rtpriv->last_played->BufPtr - runtime->dma_addr;
++
++	ret = bytes_to_frames(runtime, ret);
++	
++	return ret;
++}
++
++static int ar71xx_pcm_mmap(struct snd_pcm_substream *ss, struct vm_area_struct *vma)
++{
++	printk("in pcm_mmap\n");
++
++	return remap_pfn_range(vma, vma->vm_start,
++			ss->dma_buffer.addr >> PAGE_SHIFT,
++			vma->vm_end - vma->vm_start, vma->vm_page_prot);
++}
++
++static struct snd_pcm_ops ar71xx_pcm_ops = {
++	.open		= ar71xx_pcm_open,
++	.close		= ar71xx_pcm_close,
++	.ioctl		= snd_pcm_lib_ioctl,
++	.hw_params	= ar71xx_pcm_hw_params,
++	.hw_free	= ar71xx_pcm_hw_free,
++	.prepare	= ar71xx_pcm_prepare,
++	.trigger	= ar71xx_pcm_trigger,
++	.pointer	= ar71xx_pcm_pointer,
++	.mmap		= ar71xx_pcm_mmap,
++};
++
++static void ar71xx_pcm_free_dma_buffers(struct snd_pcm *pcm)
++{
++	struct snd_pcm_substream *ss;
++	struct snd_dma_buffer *buf;
++	int stream;
++
++	for (stream = 0; stream < 2; stream++) {
++		ss = pcm->streams[stream].substream;
++		if (!ss)
++			continue;
++		buf = &ss->dma_buffer;
++		if (!buf->area)
++			continue;
++		dma_free_coherent(NULL, buf->bytes,
++				      buf->area, buf->addr);
++		buf->area = NULL;
++	}
++
++	ar71xx_mbox_dma_exit();
++}
++
++static int ar71xx_pcm_preallocate_dma_buffer(struct snd_pcm *pcm, int stream)
++{
++	struct snd_pcm_substream *ss = pcm->streams[stream].substream;
++	struct snd_dma_buffer *buf = &ss->dma_buffer;
++
++	printk(KERN_NOTICE "%s: allocate %8s stream\n", __FUNCTION__,
++		stream == SNDRV_PCM_STREAM_CAPTURE ? "capture" : "playback" );
++
++	buf->dev.type = SNDRV_DMA_TYPE_DEV;
++	buf->dev.dev = pcm->card->dev;
++	buf->private_data = NULL;
++	buf->bytes = ar71xx_pcm_hardware.buffer_bytes_max;
++
++	buf->area = dma_alloc_coherent(NULL, buf->bytes,
++					   &buf->addr, GFP_DMA);
++	if (!buf->area)
++		return -ENOMEM;
++
++	printk(KERN_NOTICE "%s: 0x%xB allocated at 0x%08x\n",
++		__FUNCTION__, buf->bytes, (u32) buf->area);
++
++	return 0;
++}
++
++static u64 ar71xx_pcm_dmamask = 0xffffffff;
++
++static int ar71xx_soc_pcm_new(struct snd_soc_pcm_runtime *rtd)
++{
++	struct snd_card *card = rtd->card->snd_card;
++	struct snd_pcm *pcm = rtd->pcm;
++	int ret = 0;
++
++	printk("in soc_pcm_new\n");
++
++	if (!card->dev->dma_mask)
++		card->dev->dma_mask = &ar71xx_pcm_dmamask;
++	if (!card->dev->coherent_dma_mask)
++		card->dev->coherent_dma_mask = DMA_BIT_MASK(32);
++
++	if (pcm->streams[SNDRV_PCM_STREAM_PLAYBACK].substream) {
++		ret = ar71xx_pcm_preallocate_dma_buffer(pcm,
++			SNDRV_PCM_STREAM_PLAYBACK);
++		if (ret)
++			goto out;
++	}
++
++	if (pcm->streams[SNDRV_PCM_STREAM_CAPTURE].substream) {
++		ret = ar71xx_pcm_preallocate_dma_buffer(pcm,
++			SNDRV_PCM_STREAM_CAPTURE);
++		if (ret)
++			goto out;
++	}
++
++	//TODO is this the right device? or is it rather rtd->dev?
++	ar71xx_mbox_dma_init(rtd->platform->dev);
++
++out:
++	return ret;
++}
++
++struct snd_soc_platform_driver ar71xx_soc_platform = {
++	.ops		= &ar71xx_pcm_ops,
++	.pcm_new	= ar71xx_soc_pcm_new,
++	.pcm_free	= ar71xx_pcm_free_dma_buffers,
++};
++EXPORT_SYMBOL_GPL(ar71xx_soc_platform);
++
++
++static const struct regmap_config ar71xx_regmap_config[] = {
++	/* MBOX DMA Registers */
++	{
++		.reg_bits = 32,
++		.reg_stride = 4,
++		.val_bits = 32,
++		.max_register = AR9331_SLIC_MBOX_DMA_FIFO_RESET,
++		.cache_type = REGCACHE_RBTREE,
++	},
++	/* Reset Registers */
++	{
++		.reg_bits = 32,
++		.reg_stride = 4,
++		.val_bits = 32,
++		.max_register = AR9331_RESET_RST_RESET,
++		.cache_type = REGCACHE_RBTREE,
++	},
++	/* Interrupt Registers */
++	{
++		.reg_bits = 32,
++		.reg_stride = 4,
++		.val_bits = 32,
++		.max_register = AR9331_RESET_RST_MISC_INT_MASK,
++		.cache_type = REGCACHE_RBTREE,
++	},
++};
++
++static int ar71xx_pcm_probe(struct platform_device *pdev)
++{
++	struct ar71xx_pcm_dev *dev;
++	struct ar71xx_pcm_pltfm_priv *prdata;
++
++	int ret, i;
++	struct regmap *regmap[3];
++	struct resource *mem[3];
++
++	printk("in pcm probe\n");
++
++
++	/* Request ioarea */
++	for (i = 0; i < 3; i++) {
++		void __iomem *base;
++	
++		mem[i] = platform_get_resource(pdev, IORESOURCE_MEM, i);
++
++		base = devm_ioremap_resource(&pdev->dev, mem[i]);
++		if (IS_ERR(base))
++			return PTR_ERR(base);
++
++		regmap[i] = devm_regmap_init_mmio(&pdev->dev, base,
++					    &ar71xx_regmap_config[i]);
++		if (IS_ERR(regmap[i])) {
++			dev_err(&pdev->dev, "PCM probe: regmap init failed\n");
++			return PTR_ERR(regmap[i]);
++		}
++	
++		printk("allocated regmap[%d] at %p\n", i, regmap[i]);
++	}
++
++	prdata = kzalloc(sizeof(struct ar71xx_pcm_pltfm_priv), GFP_KERNEL);
++	if (prdata == NULL)
++		return -ENOMEM;
++
++	prdata->mbox_regmap = regmap[0];
++	prdata->reset_regmap = regmap[1];
++	prdata->misc_int_regmap = regmap[2];
++
++	/* interrupt not yet enabled */
++	prdata->irq_en = false;
++
++	//snd_soc_platform_set_drvdata(platform, prdata);
++#if 0
++	dev = devm_kzalloc(&pdev->dev, sizeof(*dev), GFP_KERNEL);
++
++	if (IS_ERR(dev))
++		return PTR_ERR(dev);
++
++	dev->mbox_regmap = regmap[0];
++	dev->reset_regmap = regmap[1];
++	dev->misc_int_regmap = regmap[2];
++
++
++	/* Store the pdev */
++	dev->dev = &pdev->dev;
++	dev_set_drvdata(&pdev->dev, dev);
++#endif
++
++	prdata->dev = &pdev->dev;
++	dev_set_drvdata(&pdev->dev, prdata);
++
++	struct ar71xx_pcm_pltfm_priv *prdata_test = dev_get_drvdata(&pdev->dev);
++
++	printk("private data at %p\nprdata->mbox_regmap at %p\nprdata->reset_regmap at %p\n", prdata_test, prdata_test->mbox_regmap, prdata_test->reset_regmap);
++
++#if 0
++	/* setup new platform private struct (input and output pcm substream) */
++	prdata = devm_kzalloc(&pdev->dev, sizeof(struct ar71xx_pcm_pltfm_priv), GFP_KERNEL);
++	if (prdata == NULL)
++		return -ENOMEM;
++
++	//TODO not best practice to request irq in probe but i have currently no better solution
++	err = request_irq(ATH79_MISC_IRQ(7), ar71xx_pcm_interrupt, 0,
++			  "ar71xx-pcm-interrupt", prdata);
++	if (err) {
++		kfree(prdata);
++		return -EBUSY;
++	}
++
++	prdata->mbox_regmap = regmap[0];
++	prdata->reset_regmap = regmap[1];
++
++	snd_soc_platform_set_drvdata(platform, prdata);
++	// end of XXX
++#endif
++
++	ret = snd_soc_register_platform(&pdev->dev, &ar71xx_soc_platform);
++
++	if (ret) {
++		dev_err(&pdev->dev, "Could not register platform: %d\n", ret);
++		ret = -ENOMEM;
++		return ret;
++	}
++
++	return 0;
++}
++
++static int ar71xx_pcm_remove(struct platform_device *pdev)
++{
++	printk("in pcm remove\n");
++
++	snd_soc_unregister_platform(&pdev->dev);
++	return 0;
++}
++
++static struct platform_driver ar71xx_pcm_driver = {
++	.probe 		= ar71xx_pcm_probe,
++	.remove 	= __exit_p(ar71xx_pcm_remove),
++	.driver 	= {
++		.name 	= "ar71xx-pcm",
++		.owner 	= THIS_MODULE,
++	},
++};
++
++module_platform_driver(ar71xx_pcm_driver);
++
++MODULE_ALIAS("platform:ar71xx-pcm");
++MODULE_DESCRIPTION("QCA Audio PCM DMA module");
++MODULE_AUTHOR("Felix Kramer <felixkramerroki@aol.com>");
++MODULE_LICENSE("GPL v2");
+--- /dev/null
++++ b/sound/soc/ar71xx/ar71xx-pcm.h
+@@ -0,0 +1,182 @@
++#ifndef AR71XX_PCM_H_
++#define AR71XX_PCM_H_
++
++#include <linux/sound.h>
++#include <linux/list.h>
++#include <linux/spinlock.h>
++#include <linux/module.h>
++
++
++/* MBOX REGISTERS */
++#define AR9331_MBOX_DMA_POLICY			0x10
++#define AR9331_MBOX_DMA_RX_DESCRIPTOR_BASE	0x18
++#define AR9331_MBOX_DMA_RX_CONTROL		0x1c
++#define AR9331_MBOX_DMA_TX_DESCRIPTOR_BASE	0x20
++#define AR9331_MBOX_DMA_TX_CONTROL		0x24
++#define AR9331_MBOX_INT_STATUS			0x44
++#define AR9331_MBOX_INT_ENABLE			0x4c
++#define AR9331_MBOX_DMA_FIFO_RESET		0x58
++#define AR9331_SLIC_MBOX_DMA_FIFO_RESET		0x5C
++
++#define AR9331_MBOX_DMA_CONTROL_STOP			BIT(0)
++#define AR9331_MBOX_DMA_CONTROL_START			BIT(1)
++#define AR9331_MBOX_DMA_CONTROL_RESUME			BIT(2)
++
++#define AR9331_MBOX_DMA_POLICY_RX_QUANTUM		BIT(1) 
++#define AR9331_MBOX_DMA_POLICY_TX_QUANTUM		BIT(3)
++#define AR9331_MBOX_DMA_POLICY_TX_FIFO_THRESH(v)	(((v) & 0xf) << 4)
++
++#define AR9331_MBOX_DMA_FIFO_RESET_TX_INIT		BIT(2)
++#define AR9331_MBOX_DMA_FIFO_RESET_RX_INIT		BIT(0)
++
++#define AR9331_MBOX_INT_ENABLE_RX_DMA_COMPLETE		BIT(10)
++#define AR9331_MBOX_INT_ENABLE_TX_DMA_EOM_COMPLETE	BIT(8)
++#define AR9331_MBOX_INT_ENABLE_TX_DMA_COMPLETE		BIT(6)
++#define AR9331_MBOX_INT_ENABLE_TX_OVERFLOW		BIT(5)
++#define AR9331_MBOX_INT_ENABLE_RX_UNDERFLOW		BIT(4)
++#define AR9331_MBOX_INT_ENABLE_TX_NOT_EMPTY		BIT(2)
++#define AR9331_MBOX_INT_ENABLE_RX_NOT_FULL		BIT(0)
++
++/* Reset Registers */
++#define AR9331_RESET_RST_RESET				0x00
++
++#define AR9331_RESET_RST_RESET_MBOX			BIT(1)
++#define AR9331_RESET_RST_RESET_I2S			BIT(0)
++
++
++/* interrupts */
++#define AR9331_RESET_RST_MISC_INT_STATUS		0x00
++#define AR9331_RESET_RST_MISC_INT_MASK			0x04
++
++#define AR9331_RESET_RST_MISC_INT_MASK_MBOX		BIT(7)
++
++
++
++#define ATH79_MISC_IRQ_BASE	8
++#define ATH79_MISC_IRQ(_x)	(ATH79_MISC_IRQ_BASE + (_x))
++
++//TODO find extern spinlock
++extern spinlock_t ar71xx_pcm_lock;
++
++struct ar71xx_pcm_dev {
++	struct device		*dev;
++
++	struct regmap 		*mbox_regmap;
++	struct regmap		*reset_regmap;
++	struct regmap		*misc_int_regmap;
++};
++
++
++struct ar71xx_pcm_desc {
++	unsigned int	OWN	:  1,    /* bit 31 */
++			EOM	:  1,    /* bit 30 */
++			rsvd1	:  6,    /* bit 29-24 */
++			size	: 12,    /* bit 23-12 */
++			length	: 12,    /* bit 11-00 */
++			rsvd2	:  4,    /* bit 31-28 */
++			BufPtr	: 28,    /* bit 27-00 */
++			rsvd3	:  4,    /* bit 31-28 */
++			NextPtr	: 28;    /* bit 27-00 */
++
++	unsigned int Va[6];
++	unsigned int Ua[6];
++	unsigned int Ca[6];
++	unsigned int Vb[6];
++	unsigned int Ub[6];
++	unsigned int Cb[6];
++
++	/* Software specific data
++	 * These data are not taken into account by the HW */
++	struct list_head list; /* List linking all the buffer in virt@ space */
++	dma_addr_t phys; /* Physical address of the descriptor */
++};
++
++struct ar71xx_pcm_rt_priv {
++	struct list_head dma_head;
++	struct ar71xx_pcm_desc *last_played;
++	unsigned int elapsed_size;
++	unsigned int delay_time;
++	int direction;
++};
++
++/* Replaces struct ath_i2s_softc */
++struct ar71xx_pcm_pltfm_priv {
++	struct snd_pcm_substream *playback;
++	struct snd_pcm_substream *capture;
++
++	//ar71xx_pcm_dev
++	struct device		*dev;
++
++	struct regmap 		*mbox_regmap;
++	struct regmap		*reset_regmap;
++	struct regmap		*misc_int_regmap;
++
++	bool irq_en;
++};
++
++
++
++/* platform data */
++extern struct snd_soc_platform_driver ar71xx_soc_platform;
++
++/* mbox functions */
++void ar71xx_mbox_interrupt_ack(u32 mask, struct ar71xx_pcm_pltfm_priv *dev);
++void ar71xx_mbox_dma_start(struct ar71xx_pcm_rt_priv *rtpriv, struct ar71xx_pcm_pltfm_priv *dev);
++void ar71xx_mbox_dma_stop(struct ar71xx_pcm_rt_priv *rtpriv, struct ar71xx_pcm_pltfm_priv *dev);
++void ar71xx_mbox_dma_prepare(struct ar71xx_pcm_rt_priv *rtpriv, struct ar71xx_pcm_pltfm_priv *dev);
++int ar71xx_mbox_dma_map(struct ar71xx_pcm_rt_priv *rtpriv, dma_addr_t baseaddr, int period_bytes, int bufsize);
++void ar71xx_mbox_dma_unmap(struct ar71xx_pcm_rt_priv *rtpriv);
++int ar71xx_mbox_dma_init(struct device *dev);
++void ar71xx_mbox_dma_exit(void);
++void ar71xx_mbox_dma_reset(struct ar71xx_pcm_pltfm_priv *dev);
++
++
++static inline unsigned int ar71xx_pcm_set_own_bits(struct ar71xx_pcm_rt_priv *rtpriv)
++{
++	struct ar71xx_pcm_desc *desc;
++	unsigned int size_played = 0;
++
++	spin_lock(&ar71xx_pcm_lock);
++	list_for_each_entry(desc, &rtpriv->dma_head, list) {
++		if (desc->OWN == 0) {
++			desc->OWN = 1;
++			size_played += desc->size;
++		}
++	}
++	spin_unlock(&ar71xx_pcm_lock);
++	return size_played;
++}
++
++static inline void ar71xx_pcm_clear_own_bits(struct ar71xx_pcm_rt_priv *rtpriv)
++{
++	struct ar71xx_pcm_desc *desc;
++
++	spin_lock(&ar71xx_pcm_lock);
++	list_for_each_entry(desc, &rtpriv->dma_head, list) {
++		if (desc->OWN == 1) {
++			desc->OWN = 0;
++		}
++	}
++	spin_unlock(&ar71xx_pcm_lock);
++}
++
++static inline struct ar71xx_pcm_desc *ar71xx_pcm_get_last_played(struct ar71xx_pcm_rt_priv *rtpriv)
++{
++	struct ar71xx_pcm_desc *desc, *prev;
++
++	spin_lock(&ar71xx_pcm_lock);
++	prev = list_entry(rtpriv->dma_head.prev, struct ar71xx_pcm_desc, list);
++	list_for_each_entry(desc, &rtpriv->dma_head, list) {
++		if (desc->OWN == 1 && prev->OWN == 0) {
++			return desc;
++		}
++		prev = desc;
++	}
++	spin_unlock(&ar71xx_pcm_lock);
++
++	/* If we didn't find the last played buffer, return NULL */
++	return NULL;
++}
++
++
++#endif /* AR71XX_PCM_H_ */
+--- /dev/null
++++ b/arch/mips/ath79/dev-pcm.c
+@@ -0,0 +1,23 @@
++/*
++ *  Atheros AR9331 PCM Audio support
++ *
++ *  Copyright (C) 2014 Felix Kramer <felixkramerroki@aol.com>
++ *
++ *  This program is free software; you can redistribute it and/or modify it
++ *  under the terms of the GNU General Public License version 2 as published
++ *  by the Free Software Foundation.
++ */
++
++#include "dev-pcm.h"
++
++int __init ath79_register_pcm(struct platform_device *pdev)
++{
++	int ret;
++
++	ret = platform_device_register(pdev);
++	if (ret)
++		pr_debug("Unable to register platform devices '%s' %d\n",
++		         pdev->name, ret);
++
++	return ret;
++}
+--- /dev/null
++++ b/arch/mips/ath79/dev-pcm.h
+@@ -0,0 +1,21 @@
++/*
++ *  Atheros AR9331 PCM Audio support
++ *
++ *  Copyright (C) 2014 Felix Kramer <felixkramerroki@aol.com>
++ *
++ *  This program is free software; you can redistribute it and/or modify it
++ *  under the terms of the GNU General Public License version 2 as published
++ *  by the Free Software Foundation.
++ */
++
++#ifndef _ATH79_DEV_PCM_H
++#define _ATH79_DEV_PCM_H
++
++#include <linux/input.h>
++#include <linux/platform_device.h>
++
++
++int __init ath79_register_pcm(struct platform_device *pdev);
++
++
++#endif /* _ATH79_DEV_PCM_H */
