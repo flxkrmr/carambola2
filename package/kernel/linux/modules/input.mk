@@ -42,6 +42,7 @@ define KernelPackage/input-core
   TITLE:=Input device core
   KCONFIG:=CONFIG_INPUT
   FILES:=$(LINUX_DIR)/drivers/input/input-core.ko
+  AUTOLOAD:=$(call AutoProbe,input-core)
 endef
 
 define KernelPackage/input-core/description

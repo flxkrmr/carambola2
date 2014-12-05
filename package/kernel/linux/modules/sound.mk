@@ -16,9 +16,8 @@ SOUNDCORE_LOAD ?= \
 	snd-rawmidi \
 	snd-timer \
 	snd-pcm \
-	snd-mixer-oss \
 	snd-pcm-oss \
-	snd-page-alloc
+	snd-mixer-oss \
 
 SOUNDCORE_FILES ?= \
 	$(LINUX_DIR)/sound/soundcore.ko \
@@ -30,7 +29,6 @@ SOUNDCORE_FILES ?= \
 	$(LINUX_DIR)/sound/core/snd-pcm.ko \
 	$(LINUX_DIR)/sound/core/oss/snd-mixer-oss.ko \
 	$(LINUX_DIR)/sound/core/oss/snd-pcm-oss.ko \
-	$(LINUX_DIR)/sound/core/snd-page-alloc.ko
 
 ifeq ($(strip $(call CompareKernelPatchVer,$(KERNEL_PATCHVER),ge,3.3.0)),1)
 SOUNDCORE_LOAD += \
@@ -200,6 +198,7 @@ define KernelPackage/sound-soc-ar71xx-i2s
   TITLE:=I2S Driver Module for AR71XX
   KCONFIG:=CONFIG_SND_SOC_AR71XX_I2S 
   FILES:=$(LINUX_DIR)/sound/soc/ar71xx/snd-soc-ar71xx-i2s.ko
+  AUTOLOAD:=$(call AutoLoad,58,snd-soc-ar71xx-i2s)
   DEPENDS:= \
 	+kmod-sound-soc-core \
 	+kmod-regmap
@@ -209,12 +208,29 @@ endef
 $(eval $(call KernelPackage,sound-soc-ar71xx-i2s))
 
 
+define KernelPackage/sound-soc-ar71xx-pcm
+  TITLE:=PCM Driver Module for AR71XX
+  KCONFIG:= \
+	CONFIG_SND_SOC_AR71XX_PCM 
+  FILES:= \
+	$(LINUX_DIR)/sound/soc/ar71xx/snd-soc-ar71xx-pcm.ko 
+  AUTOLOAD:=$(call AutoLoad,59,snd-soc-ar71xx-mbox snd-soc-ar71xx-pcm)
+  DEPENDS:= \
+	+kmod-sound-soc-core \
+	+kmod-regmap
+  $(call AddDepends/sound)
+endef
+
+$(eval $(call KernelPackage,sound-soc-ar71xx-pcm))
+
+
 define KernelPackage/sound-soc-ar71xx-hifiberry-dac
   TITLE:=Hifiberry Codec Driver
   KCONFIG:=CONFIG_SND_SOC_AR71XX_HIFIBERRY_DAC
   FILES:= \
 	$(LINUX_DIR)/sound/soc/codecs/snd-soc-pcm5102a.ko \
 	$(LINUX_DIR)/sound/soc/ar71xx/snd-soc-ar71xx-hifiberry-dac.ko
+  AUTOLOAD:=$(call AutoLoad,60,snd-soc-pcm5102a snd-soc-ar71xx-hifiberry-dac)
   DEPENDS:= \
 	+kmod-sound-soc-core \
 	+kmod-sound-soc-ar71xx-i2s 
