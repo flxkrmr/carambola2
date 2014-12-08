@@ -1349,7 +1349,7 @@
 +MODULE_LICENSE("GPL v2");
 --- /dev/null
 +++ b/sound/soc/ar71xx/ar71xx-mbox.c
-@@ -0,0 +1,368 @@
+@@ -0,0 +1,395 @@
 +/*
 + * ath79-mbox.c -- ALSA MBOX DMA management functions
 + *
@@ -1388,7 +1388,7 @@
 +		dev, dev->mbox_regmap, dev->reset_regmap);
 +
 +	//TODO spin_lock needed?
-+	//spin_lock(&ar71xx_pcm_lock);
++	spin_lock(&ar71xx_pcm_lock);
 +
 +	regmap_update_bits(dev->reset_regmap, 
 +			AR9331_RESET_RST_RESET,
@@ -1409,7 +1409,7 @@
 +			AR9331_RESET_RST_RESET_MBOX, 0);
 +	printk("in mbox_reset, after second regmap_update_bits\n");
 +
-+	//spin_unlock(&ath79_pcm_lock);
++	spin_unlock(&ar71xx_pcm_lock);
 +}
 +
 +void ar71xx_mbox_fifo_reset(bool rx, struct ar71xx_pcm_pltfm_priv *dev)
@@ -1448,20 +1448,25 @@
 +	u32 reg;
 +
 +	//TODO check if spin_lock is needed	
-+	//spin_lock(&ath79_pcm_lock);
++	spin_lock(&ar71xx_pcm_lock);
 +
 +	regmap_update_bits(dev->mbox_regmap, AR9331_MBOX_INT_ENABLE,
 +			mask, mask);
 +
++	//XXX disabling makes no difference at the moment, maybe not needed
++#if 0
 +	regmap_update_bits(dev->misc_int_regmap, AR9331_RESET_RST_MISC_INT_MASK,
 +			AR9331_RESET_RST_MISC_INT_MASK_MBOX,	
 +			AR9331_RESET_RST_MISC_INT_MASK_MBOX);
++#endif
 +
 +	//t = ath79_dma_rr(AR934X_DMA_REG_MBOX_INT_ENABLE);
 +	//t |= mask;
 +	//ath79_dma_wr(AR934X_DMA_REG_MBOX_INT_ENABLE, t);
 +
-+	//spin_unlock(&ath79_pcm_lock);
++	spin_unlock(&ar71xx_pcm_lock);
++
++	printk("enabled interrupt %08x\n", mask);
 +}
 +
 +void ar71xx_mbox_interrupt_ack(u32 mask, struct ar71xx_pcm_pltfm_priv *dev)
@@ -1475,6 +1480,18 @@
 +	//ath79_dma_rr(AR934X_DMA_REG_MBOX_INT_STATUS);
 +	regmap_read(dev->mbox_regmap, AR9331_MBOX_INT_STATUS, &reg);
 +	//ath79_reset_rr(AR71XX_RESET_REG_MISC_INT_STATUS);
++}
++
++void ar71xx_mbox_dma_rx_resume(struct ar71xx_pcm_pltfm_priv *dev)
++{
++	u32 reg;
++
++	regmap_write(dev->mbox_regmap, 
++		AR9331_MBOX_DMA_RX_CONTROL, 
++		AR9331_MBOX_DMA_CONTROL_RESUME);
++	regmap_read(dev->mbox_regmap,
++		AR9331_MBOX_DMA_RX_CONTROL, &reg);
++	printk("mbox resume: %08x\n", reg);
 +}
 +
 +void ar71xx_mbox_dma_start(struct ar71xx_pcm_rt_priv *rtpriv, struct ar71xx_pcm_pltfm_priv *dev)
@@ -1616,9 +1633,7 @@
 +#if 1
 +	u32 int_en = AR9331_MBOX_INT_ENABLE_TX_DMA_EOM_COMPLETE |
 +			AR9331_MBOX_INT_ENABLE_TX_OVERFLOW |
-+			AR9331_MBOX_INT_ENABLE_RX_UNDERFLOW |
-+			AR9331_MBOX_INT_ENABLE_TX_NOT_EMPTY |
-+			AR9331_MBOX_INT_ENABLE_RX_NOT_FULL;
++			AR9331_MBOX_INT_ENABLE_RX_UNDERFLOW;
 +	ar71xx_mbox_interrupt_enable(int_en, dev);
 +#endif
 +
@@ -1632,6 +1647,9 @@
 +	struct ar71xx_pcm_desc *desc, *prev;
 +	dma_addr_t desc_p;
 +	unsigned int offset = 0;
++	int desc_numb = 0;
++	printk("in dma_map\n");
++
 +
 +	spin_lock(&ar71xx_pcm_lock);
 +
@@ -1662,7 +1680,7 @@
 +		 * -->length == size */
 +		desc->length = desc->size;
 +
-+			/* We need to make sure we are not the first descriptor.
++		/* We need to make sure we are not the first descriptor.
 +		 * If we are, prev doesn't point to a struct ath79_pcm_desc */
 +		if (desc->list.prev != head) {
 +			prev =
@@ -1672,7 +1690,13 @@
 +		}
 +
 +		offset += desc->size;
++		desc_numb++;
++#if 1
++		printk("descriptor %d:\n\tdesc->BufPtr: 0x%08x\n\tdesc->phys: 0x%08x\n\tdesc->size: %d\n", desc_numb, desc->BufPtr, desc->phys, desc->size);
++#endif
 +	} while (offset < bufsize);
++
++	printk("created %d descriptor(s)\n", desc_numb);
 +
 +	/* Once all the descriptors have been created, we can close the loop
 +	 * by pointing from the last one to the first one */
@@ -1681,6 +1705,9 @@
 +	prev->NextPtr = desc->phys;
 +
 +	spin_unlock(&ar71xx_pcm_lock);
++
++	printk("desc: 0x%08x\nprev: 0x%08x\n", desc->BufPtr, prev->BufPtr);
++
 +
 +	return 0;
 +}
@@ -1720,7 +1747,7 @@
 +}
 --- /dev/null
 +++ b/sound/soc/ar71xx/ar71xx-pcm.c
-@@ -0,0 +1,631 @@
+@@ -0,0 +1,649 @@
 +/*
 + * ath-pcm.c -- ALSA PCM interface for the QCA Wasp based audio interface
 + *
@@ -1797,22 +1824,30 @@
 +
 +static irqreturn_t ar71xx_pcm_interrupt(int irq, void *dev_id)
 +{
-+	//printk("interrupt\n");
 +	uint32_t status;
 +	struct ar71xx_pcm_pltfm_priv *prdata = dev_id;
 +	struct ar71xx_pcm_rt_priv *rtpriv;
 +	unsigned int period_bytes;
 +
 +
++#if 0
 +	//XXX look for error interrupts
 +	const uint32_t mystatus = AR9331_MBOX_INT_ENABLE_TX_DMA_EOM_COMPLETE |
 +				AR9331_MBOX_INT_ENABLE_TX_OVERFLOW |
 +				AR9331_MBOX_INT_ENABLE_RX_UNDERFLOW |
 +				AR9331_MBOX_INT_ENABLE_TX_NOT_EMPTY |
 +				AR9331_MBOX_INT_ENABLE_RX_NOT_FULL;
++#endif
 +
 +	regmap_read(prdata->mbox_regmap, AR9331_MBOX_INT_STATUS, &status);
-+	
++	printk("###interrupt###\tstatus: %08x\n", status);
++
++	/*
++	 * 1 Frame = channels * bitnumber
++	 * eg: 2 chnls * 16 Bit = 4 Bytes
++	 *	
++	 * period: number of frames between HW interrupts
++	 */
 +
 +	/* RX DMA is enabled */
 +	if(status & AR9331_MBOX_INT_ENABLE_RX_DMA_COMPLETE) {
@@ -1823,10 +1858,15 @@
 +		rtpriv->last_played = ar71xx_pcm_get_last_played(rtpriv);
 +		period_bytes = snd_pcm_lib_period_bytes(prdata->playback);
 +
-+
 +		played_size = ar71xx_pcm_set_own_bits(rtpriv);
++
++#if 1 
++		printk("period_bytes: %d, played_size: %d\n", period_bytes, played_size);
++#endif
++
 +		if(played_size > period_bytes)
-+			snd_printd("Played more than one period  bytes played: %d\n",played_size);
++			printk("Played more than one period bytes played: %d\n",played_size);
++	
 +		rtpriv->elapsed_size += played_size;
 +		ar71xx_mbox_interrupt_ack(AR9331_MBOX_INT_ENABLE_RX_DMA_COMPLETE, prdata);
 +		if(rtpriv->elapsed_size >= period_bytes)
@@ -1836,11 +1876,11 @@
 +		}
 +
 +		if (rtpriv->last_played == NULL) {
-+			snd_printd("BUG: ISR called but no played buf found\n");
++			printk("BUG: ISR called but no played buf found\n");
 +			goto ack;
 +		}
++	} 
 +
-+	}
 +	if(status & AR9331_MBOX_INT_ENABLE_TX_DMA_COMPLETE) {
 +		rtpriv = prdata->capture->runtime->private_data;
 +
@@ -1850,15 +1890,17 @@
 +		ar71xx_mbox_interrupt_ack(AR9331_MBOX_INT_ENABLE_TX_DMA_COMPLETE, prdata);
 +
 +		if (rtpriv->last_played == NULL) {
-+			snd_printd("BUG: ISR called but no rec buf found\n");
++			printk("BUG: ISR called but no rec buf found\n");
 +			goto ack;
 +		}
 +		snd_pcm_period_elapsed(prdata->capture);
 +	}
++#if 0
 +	if(status & mystatus) {
-+		printk("***interrupt error***, value:%08x\n", status);
++		//printk("***interrupt error***, value:%08x\n", status);
 +		ar71xx_mbox_interrupt_ack(status, prdata);
 +	}
++#endif
 +
 +ack:
 +	return IRQ_HANDLED;
@@ -1969,7 +2011,7 @@
 +	struct snd_pcm_runtime *runtime = ss->runtime;
 +	struct ar71xx_pcm_rt_priv *rtpriv;
 +	int ret;
-+	unsigned int period_size, sample_size, sample_rate, frames, channels;
++	unsigned int buffer_size, period_size, sample_size, sample_rate, frames, channels;
 +
 +	printk("in pcm_hw_params\n");
 +
@@ -1981,12 +2023,16 @@
 +
 +	if(ret < 0)
 +		return ret;
-+
++	
++	//TODO what for??
 +	period_size = params_period_bytes(hw_params);
 +	sample_size = snd_pcm_format_size(params_format(hw_params), 1);
++	buffer_size = params_buffer_bytes(hw_params);
 +	sample_rate = params_rate(hw_params);
 +	channels = params_channels(hw_params);
 +	frames = period_size / (sample_size * channels);
++
++	printk("parameters:\nperiod_size\t->\t%d\nsample_size\t->\t%d\nsample_rate\t->\t%d\nchannels\t\t->\t%d\nframes\t\t->\t%d\nbuffer_size\t->\t%d\n", period_size, sample_size, sample_rate, channels, frames, buffer_size);
 +
 +/* 	When we disbale the DMA engine, it could be just at the start of a descriptor.
 +	Hence calculate the longest time the DMA engine could be grabbing bytes for to
@@ -2038,15 +2084,12 @@
 +		printk("cpu_dai->active == 1; doing and mbox_dma_reset\n");
 +		ar71xx_mbox_dma_reset(dev);
 +	}
-+	
-+	printk("doing mbox_dma_prepare\n");
++
 +	ar71xx_mbox_dma_prepare(rtpriv, dev);
-+	
-+	printk("doing pcm_set_own_bits\n");
++
 +	ar71xx_pcm_set_own_bits(rtpriv);
 +	rtpriv->last_played = NULL;
-+	
-+	printk("pcm_prepare successfull\n");
++
 +	return 0;
 +}
 +
@@ -2081,6 +2124,7 @@
 +	struct ar71xx_pcm_rt_priv *rtpriv;
 +	snd_pcm_uframes_t ret = 0;
 +
++
 +	rtpriv = runtime->private_data;
 +
 +	if(rtpriv->last_played == NULL)
@@ -2089,6 +2133,8 @@
 +		ret = rtpriv->last_played->BufPtr - runtime->dma_addr;
 +
 +	ret = bytes_to_frames(runtime, ret);
++
++	printk("called pcm_pointer, ret: %d\n", ret);
 +	
 +	return ret;
 +}
@@ -2188,7 +2234,6 @@
 +			goto out;
 +	}
 +
-+	//TODO is this the right device? or is it rather rtd->dev?
 +	ar71xx_mbox_dma_init(rtd->platform->dev);
 +
 +out:
@@ -2354,7 +2399,7 @@
 +MODULE_LICENSE("GPL v2");
 --- /dev/null
 +++ b/sound/soc/ar71xx/ar71xx-pcm.h
-@@ -0,0 +1,182 @@
+@@ -0,0 +1,192 @@
 +#ifndef AR71XX_PCM_H_
 +#define AR71XX_PCM_H_
 +
@@ -2486,8 +2531,10 @@
 +int ar71xx_mbox_dma_init(struct device *dev);
 +void ar71xx_mbox_dma_exit(void);
 +void ar71xx_mbox_dma_reset(struct ar71xx_pcm_pltfm_priv *dev);
++void ar71xx_mbox_dma_rx_resume(struct ar71xx_pcm_pltfm_priv *dev);
 +
 +
++/* sets OWN bits in descriptor to 1 and returns overall size of played data */
 +static inline unsigned int ar71xx_pcm_set_own_bits(struct ar71xx_pcm_rt_priv *rtpriv)
 +{
 +	struct ar71xx_pcm_desc *desc;
@@ -2521,18 +2568,26 @@
 +{
 +	struct ar71xx_pcm_desc *desc, *prev;
 +
++	//XXX changed because when returning NULL, spin lock wasn't unlocked
++	//TODO save memory, delete this struct
++	struct ar71xx_pcm_desc *ret = NULL;
++
 +	spin_lock(&ar71xx_pcm_lock);
 +	prev = list_entry(rtpriv->dma_head.prev, struct ar71xx_pcm_desc, list);
 +	list_for_each_entry(desc, &rtpriv->dma_head, list) {
 +		if (desc->OWN == 1 && prev->OWN == 0) {
-+			return desc;
++			//return desc;
++			ret = desc;
++			goto out;
 +		}
 +		prev = desc;
 +	}
++
++out:
 +	spin_unlock(&ar71xx_pcm_lock);
 +
 +	/* If we didn't find the last played buffer, return NULL */
-+	return NULL;
++	return ret;
 +}
 +
 +
