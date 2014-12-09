@@ -1349,7 +1349,7 @@
 +MODULE_LICENSE("GPL v2");
 --- /dev/null
 +++ b/sound/soc/ar71xx/ar71xx-mbox.c
-@@ -0,0 +1,395 @@
+@@ -0,0 +1,412 @@
 +/*
 + * ath79-mbox.c -- ALSA MBOX DMA management functions
 + *
@@ -1453,6 +1453,9 @@
 +	regmap_update_bits(dev->mbox_regmap, AR9331_MBOX_INT_ENABLE,
 +			mask, mask);
 +
++	regmap_read(dev->mbox_regmap, AR9331_MBOX_INT_ENABLE,
++			&reg);
++
 +	//XXX disabling makes no difference at the moment, maybe not needed
 +#if 0
 +	regmap_update_bits(dev->misc_int_regmap, AR9331_RESET_RST_MISC_INT_MASK,
@@ -1466,7 +1469,7 @@
 +
 +	spin_unlock(&ar71xx_pcm_lock);
 +
-+	printk("enabled interrupt %08x\n", mask);
++	printk("enabled interrupt wiht %08x, value now at %08x\n", mask, reg);
 +}
 +
 +void ar71xx_mbox_interrupt_ack(u32 mask, struct ar71xx_pcm_pltfm_priv *dev)
@@ -1474,12 +1477,17 @@
 +	u32 reg;
 +	//ath79_dma_wr(AR934X_DMA_REG_MBOX_INT_STATUS, mask);
 +	regmap_write(dev->mbox_regmap, AR9331_MBOX_INT_STATUS, mask);
-+	//not available on 9331
++
++	//not available on 9331, if resetting this bit, the carambola 2 restarts
 +	//ath79_reset_wr(AR71XX_RESET_REG_MISC_INT_STATUS, ~(MISC_INT_DMA));
++	//regmap_write(dev->reset_regmap, AR9331_RESET_RST_MISC_INT_STATUS, ~(MISC_INT_DMA));
++
 +	/* Flush these two registers */
 +	//ath79_dma_rr(AR934X_DMA_REG_MBOX_INT_STATUS);
 +	regmap_read(dev->mbox_regmap, AR9331_MBOX_INT_STATUS, &reg);
++
 +	//ath79_reset_rr(AR71XX_RESET_REG_MISC_INT_STATUS);
++	//regmap_read(dev->reset_regmap, AR9331_RESET_RST_MISC_INT_STATUS, &reg);
 +}
 +
 +void ar71xx_mbox_dma_rx_resume(struct ar71xx_pcm_pltfm_priv *dev)
@@ -1496,20 +1504,23 @@
 +
 +void ar71xx_mbox_dma_start(struct ar71xx_pcm_rt_priv *rtpriv, struct ar71xx_pcm_pltfm_priv *dev)
 +{
++#define TIMER_VAL	100
 +	u32 reg;
 +	int timer;
 +
 +	printk("starting dma\n");
 +
 +	if (rtpriv->direction == SNDRV_PCM_STREAM_PLAYBACK) {
++#if 0
 +		regmap_write(dev->mbox_regmap, 
 +			AR9331_MBOX_DMA_RX_CONTROL, 
 +			AR9331_MBOX_DMA_CONTROL_STOP);
++#endif
 +		regmap_write(dev->mbox_regmap, 
 +			AR9331_MBOX_DMA_RX_CONTROL, 
 +			AR9331_MBOX_DMA_CONTROL_START);
 +
-+		for(timer = 100; timer > 0; timer--) {
++		for(timer = TIMER_VAL; timer > 0; timer--) {
 +			regmap_read(dev->mbox_regmap,
 +				AR9331_MBOX_DMA_RX_CONTROL, &reg);
 +			if(!reg) 
@@ -1520,14 +1531,16 @@
 +		//	     AR934X_DMA_MBOX_DMA_CONTROL_START);
 +		//ath79_dma_rr(AR934X_DMA_REG_MBOX0_DMA_RX_CONTROL);
 +	} else {
++#if 0
 +		regmap_write(dev->mbox_regmap, 
 +			AR9331_MBOX_DMA_TX_CONTROL, 
 +			AR9331_MBOX_DMA_CONTROL_STOP);
++#endif
 +		regmap_write(dev->mbox_regmap, 
 +			AR9331_MBOX_DMA_TX_CONTROL, 
 +			AR9331_MBOX_DMA_CONTROL_START);
 +
-+		for(timer = 100; timer > 0; timer--) {
++		for(timer = TIMER_VAL; timer > 0; timer--) {
 +			regmap_read(dev->mbox_regmap,
 +				AR9331_MBOX_DMA_TX_CONTROL, &reg);
 +			if(!reg) 
@@ -1538,6 +1551,7 @@
 +		//	     AR934X_DMA_MBOX_DMA_CONTROL_START);
 +		//ath79_dma_rr(AR934X_DMA_REG_MBOX0_DMA_TX_CONTROL);
 +	}
++#undef TIMER_VAL
 +
 +}
 +
@@ -1565,6 +1579,7 @@
 +	/* Delay for the dynamically calculated max time based on
 +	sample size, channel, sample rate + margin to ensure that the
 +	DMA engine will be truly idle. */
++	//TODO timer
 +
 +	mdelay(rtpriv->delay_time);
 +}
@@ -1630,7 +1645,7 @@
 +	}
 +
 +	// XXX enable all mbox interrupts!
-+#if 1
++#if 0
 +	u32 int_en = AR9331_MBOX_INT_ENABLE_TX_DMA_EOM_COMPLETE |
 +			AR9331_MBOX_INT_ENABLE_TX_OVERFLOW |
 +			AR9331_MBOX_INT_ENABLE_RX_UNDERFLOW;
@@ -1648,10 +1663,11 @@
 +	dma_addr_t desc_p;
 +	unsigned int offset = 0;
 +	int desc_numb = 0;
++
 +	printk("in dma_map\n");
 +
-+
 +	spin_lock(&ar71xx_pcm_lock);
++
 +
 +	rtpriv->elapsed_size = 0;
 +	/* We loop until we have enough buffers to map the requested DMA area */
@@ -1666,6 +1682,7 @@
 +		list_add_tail(&desc->list, head);
 +
 +		desc->OWN = 1;
++		//not really needed
 +		desc->rsvd1 = desc->rsvd2 = desc->rsvd3 = desc->EOM = 0;
 +
 +		/* buffer size may not be a multiple of period_bytes */
@@ -1681,7 +1698,7 @@
 +		desc->length = desc->size;
 +
 +		/* We need to make sure we are not the first descriptor.
-+		 * If we are, prev doesn't point to a struct ath79_pcm_desc */
++		 * If we are, prev doesn't point to a struct ar71xx_pcm_desc */
 +		if (desc->list.prev != head) {
 +			prev =
 +			    list_entry(desc->list.prev, struct ar71xx_pcm_desc,
@@ -1747,7 +1764,7 @@
 +}
 --- /dev/null
 +++ b/sound/soc/ar71xx/ar71xx-pcm.c
-@@ -0,0 +1,649 @@
+@@ -0,0 +1,654 @@
 +/*
 + * ath-pcm.c -- ALSA PCM interface for the QCA Wasp based audio interface
 + *
@@ -1840,7 +1857,9 @@
 +#endif
 +
 +	regmap_read(prdata->mbox_regmap, AR9331_MBOX_INT_STATUS, &status);
++#if 0
 +	printk("###interrupt###\tstatus: %08x\n", status);
++#endif
 +
 +	/*
 +	 * 1 Frame = channels * bitnumber
@@ -1860,7 +1879,7 @@
 +
 +		played_size = ar71xx_pcm_set_own_bits(rtpriv);
 +
-+#if 1 
++#if 0 
 +		printk("period_bytes: %d, played_size: %d\n", period_bytes, played_size);
 +#endif
 +
@@ -2123,6 +2142,7 @@
 +	struct snd_pcm_runtime *runtime = ss->runtime;
 +	struct ar71xx_pcm_rt_priv *rtpriv;
 +	snd_pcm_uframes_t ret = 0;
++	snd_pcm_uframes_t ret_frames = 0;
 +
 +
 +	rtpriv = runtime->private_data;
@@ -2132,9 +2152,11 @@
 +	else
 +		ret = rtpriv->last_played->BufPtr - runtime->dma_addr;
 +
-+	ret = bytes_to_frames(runtime, ret);
++	ret_frames = bytes_to_frames(runtime, ret);
 +
-+	printk("called pcm_pointer, ret: %d\n", ret);
++#if 0
++	printk("called pcm_pointer, ret: %d, ret_frames: %d\n", ret, ret_frames);
++#endif
 +	
 +	return ret;
 +}
@@ -2399,7 +2421,7 @@
 +MODULE_LICENSE("GPL v2");
 --- /dev/null
 +++ b/sound/soc/ar71xx/ar71xx-pcm.h
-@@ -0,0 +1,192 @@
+@@ -0,0 +1,196 @@
 +#ifndef AR71XX_PCM_H_
 +#define AR71XX_PCM_H_
 +
@@ -2444,6 +2466,9 @@
 +
 +#define AR9331_RESET_RST_RESET_MBOX			BIT(1)
 +#define AR9331_RESET_RST_RESET_I2S			BIT(0)
++
++//XXX
++#define MISC_INT_DMA					BIT(7)
 +
 +
 +/* interrupts */
@@ -2570,24 +2595,25 @@
 +
 +	//XXX changed because when returning NULL, spin lock wasn't unlocked
 +	//TODO save memory, delete this struct
-+	struct ar71xx_pcm_desc *ret = NULL;
++	//struct ar71xx_pcm_desc *ret = NULL;
 +
 +	spin_lock(&ar71xx_pcm_lock);
 +	prev = list_entry(rtpriv->dma_head.prev, struct ar71xx_pcm_desc, list);
 +	list_for_each_entry(desc, &rtpriv->dma_head, list) {
 +		if (desc->OWN == 1 && prev->OWN == 0) {
-+			//return desc;
-+			ret = desc;
-+			goto out;
++			return desc;
++			//ret = desc;
++			//goto out;
 +		}
 +		prev = desc;
 +	}
 +
-+out:
++//out:
 +	spin_unlock(&ar71xx_pcm_lock);
 +
 +	/* If we didn't find the last played buffer, return NULL */
-+	return ret;
++	return NULL;
++	//return ret;
 +}
 +
 +
