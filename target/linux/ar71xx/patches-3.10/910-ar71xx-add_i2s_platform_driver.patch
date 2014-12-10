@@ -1764,7 +1764,7 @@
 +}
 --- /dev/null
 +++ b/sound/soc/ar71xx/ar71xx-pcm.c
-@@ -0,0 +1,654 @@
+@@ -0,0 +1,660 @@
 +/*
 + * ath-pcm.c -- ALSA PCM interface for the QCA Wasp based audio interface
 + *
@@ -2015,8 +2015,9 @@
 +
 +	if (!prdata->playback && !prdata->capture) {
 +		free_irq(ATH79_MISC_IRQ(7), prdata);
-+		kfree(prdata);
-+		snd_soc_platform_set_drvdata(platform, NULL);
++		prdata->irq_en = false;
++		//kfree(prdata);
++		//snd_soc_platform_set_drvdata(platform, NULL);
 +	}
 +	rtpriv = ss->runtime->private_data;
 +	kfree(rtpriv);
@@ -2398,7 +2399,12 @@
 +
 +static int ar71xx_pcm_remove(struct platform_device *pdev)
 +{
++	struct ar71xx_pcm_pltfm_priv *prdata = dev_get_drvdata(&pdev->dev);
++
 +	printk("in pcm remove\n");
++
++	kfree(prdata);
++	dev_set_drvdata(&pdev->dev, NULL);
 +
 +	snd_soc_unregister_platform(&pdev->dev);
 +	return 0;
