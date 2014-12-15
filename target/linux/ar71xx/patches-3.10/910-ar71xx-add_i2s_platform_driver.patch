@@ -1349,7 +1349,7 @@
 +MODULE_LICENSE("GPL v2");
 --- /dev/null
 +++ b/sound/soc/ar71xx/ar71xx-mbox.c
-@@ -0,0 +1,412 @@
+@@ -0,0 +1,450 @@
 +/*
 + * ath79-mbox.c -- ALSA MBOX DMA management functions
 + *
@@ -1378,14 +1378,18 @@
 +
 +#include "ar71xx-pcm.h"
 +
++#define AR71XX_MBOX_DEBUG_MESSAGES	0
++
 +spinlock_t ar71xx_pcm_lock;
 +static struct dma_pool *ar71xx_pcm_cache;
 +
 +void ar71xx_mbox_reset(struct ar71xx_pcm_pltfm_priv *dev)
 +{
 +	//u32 t;
++#if AR71XX_MBOX_DEBUG_MESSAGES
 +	printk("in mbox_reset, dev: %p, dev->mbox_regmap: %p, dev->reset_regmap %p\n", 
 +		dev, dev->mbox_regmap, dev->reset_regmap);
++#endif
 +
 +	//TODO spin_lock needed?
 +	spin_lock(&ar71xx_pcm_lock);
@@ -1395,26 +1399,25 @@
 +			AR9331_RESET_RST_RESET_MBOX,
 +			AR9331_RESET_RST_RESET_MBOX);
 +	
-+	printk("in mbox_reset, after first regmap_update_bits\n");
 +	//t = ar71xx_reset_rr(AR934X_RESET_REG_RESET_MODULE);
 +	//t |= AR934X_RESET_MBOX;
 +	//ath79_reset_wr(AR934X_RESET_REG_RESET_MODULE, t);
 +	
 +	udelay(50);
-+	printk("in mbox_reset, after udelay\n");
 +	//t &= ~(AR934X_RESET_MBOX);
 +	//ath79_reset_wr(AR934X_RESET_REG_RESET_MODULE, t);
 +	regmap_update_bits(dev->reset_regmap, 
 +			AR9331_RESET_RST_RESET,
 +			AR9331_RESET_RST_RESET_MBOX, 0);
-+	printk("in mbox_reset, after second regmap_update_bits\n");
 +
 +	spin_unlock(&ar71xx_pcm_lock);
 +}
 +
 +void ar71xx_mbox_fifo_reset(bool rx, struct ar71xx_pcm_pltfm_priv *dev)
 +{
++#if AR71XX_MBOX_DEBUG_MESSAGES
 +	printk("in mbox_fifo_reset\n");
++#endif
 +	if (rx) {
 +	regmap_update_bits(dev->mbox_regmap, 
 +			AR9331_MBOX_DMA_FIFO_RESET,
@@ -1450,11 +1453,19 @@
 +	//TODO check if spin_lock is needed	
 +	spin_lock(&ar71xx_pcm_lock);
 +
++#if 0
 +	regmap_update_bits(dev->mbox_regmap, AR9331_MBOX_INT_ENABLE,
 +			mask, mask);
++#else
++	regmap_write(dev->mbox_regmap, AR9331_MBOX_INT_ENABLE,
++			mask);
++#endif
 +
++
++#if 0
 +	regmap_read(dev->mbox_regmap, AR9331_MBOX_INT_ENABLE,
 +			&reg);
++#endif
 +
 +	//XXX disabling makes no difference at the moment, maybe not needed
 +#if 0
@@ -1468,8 +1479,9 @@
 +	//ath79_dma_wr(AR934X_DMA_REG_MBOX_INT_ENABLE, t);
 +
 +	spin_unlock(&ar71xx_pcm_lock);
-+
++#if AR71XX_MBOX_DEBUG_MESSAGES
 +	printk("enabled interrupt wiht %08x, value now at %08x\n", mask, reg);
++#endif
 +}
 +
 +void ar71xx_mbox_interrupt_ack(u32 mask, struct ar71xx_pcm_pltfm_priv *dev)
@@ -1499,7 +1511,9 @@
 +		AR9331_MBOX_DMA_CONTROL_RESUME);
 +	regmap_read(dev->mbox_regmap,
 +		AR9331_MBOX_DMA_RX_CONTROL, &reg);
++#if AR71XX_MBOX_DEBUG_MESSAGES
 +	printk("mbox resume: %08x\n", reg);
++#endif
 +}
 +
 +void ar71xx_mbox_dma_start(struct ar71xx_pcm_rt_priv *rtpriv, struct ar71xx_pcm_pltfm_priv *dev)
@@ -1507,8 +1521,9 @@
 +#define TIMER_VAL	100
 +	u32 reg;
 +	int timer;
-+
++#if AR71XX_MBOX_DEBUG_MESSAGES
 +	printk("starting dma\n");
++#endif
 +
 +	if (rtpriv->direction == SNDRV_PCM_STREAM_PLAYBACK) {
 +#if 0
@@ -1526,7 +1541,9 @@
 +			if(!reg) 
 +				break;
 +		}
++#if AR71XX_MBOX_DEBUG_MESSAGES
 +		printk("mbox start: %08x, timer=%d\n", reg, timer);
++#endif
 +		//ath79_dma_wr(AR934X_DMA_REG_MBOX0_DMA_RX_CONTROL,
 +		//	     AR934X_DMA_MBOX_DMA_CONTROL_START);
 +		//ath79_dma_rr(AR934X_DMA_REG_MBOX0_DMA_RX_CONTROL);
@@ -1546,7 +1563,9 @@
 +			if(!reg) 
 +				break;
 +		}
++#if AR71XX_MBOX_DEBUG_MESSAGES
 +		printk("mbox start: %08x, timer=%d\n", reg, timer);
++#endif
 +		//ath79_dma_wr(AR934X_DMA_REG_MBOX0_DMA_TX_CONTROL,
 +		//	     AR934X_DMA_MBOX_DMA_CONTROL_START);
 +		//ath79_dma_rr(AR934X_DMA_REG_MBOX0_DMA_TX_CONTROL);
@@ -1559,7 +1578,9 @@
 +{
 +	u32 reg;
 +
++#if AR71XX_MBOX_DEBUG_MESSAGES
 +	printk("stopping dma\n");
++#endif
 +
 +	if (rtpriv->direction == SNDRV_PCM_STREAM_PLAYBACK) {
 +		regmap_write(dev->mbox_regmap, 
@@ -1574,7 +1595,9 @@
 +		regmap_read(dev->mbox_regmap,
 +			AR9331_MBOX_DMA_TX_CONTROL, &reg);
 +	}
++#if AR71XX_MBOX_DEBUG_MESSAGES
 +	printk("mbox stop: %08x\n", reg);
++#endif
 +
 +	/* Delay for the dynamically calculated max time based on
 +	sample size, channel, sample rate + margin to ensure that the
@@ -1586,7 +1609,9 @@
 +
 +void ar71xx_mbox_dma_reset(struct ar71xx_pcm_pltfm_priv *dev)
 +{
-+	printk("in mbox_dma_reset, dev: %p\n", dev);	
++#if AR71XX_MBOX_DEBUG_MESSAGES
++	printk("in mbox_dma_reset\n");	
++#endif
 +	ar71xx_mbox_reset(dev);
 +
 +	/* reset both fifos */
@@ -1598,6 +1623,9 @@
 +{
 +	struct ar71xx_pcm_desc *desc;
 +	//u32 reg;
++
++	/* first kill all interrupts */
++	regmap_write(dev->mbox_regmap, AR9331_MBOX_INT_ENABLE, 0x00);
 +
 +	if (rtpriv->direction == SNDRV_PCM_STREAM_PLAYBACK) {
 +		/* Request the DMA channel to the controller */
@@ -1652,7 +1680,9 @@
 +	ar71xx_mbox_interrupt_enable(int_en, dev);
 +#endif
 +
++#if AR71XX_MBOX_DEBUG_MESSAGES
 +	printk("mbox_dma_prepare, descriptor base: %08x\n", (u32)desc->phys);
++#endif
 +}
 +
 +int ar71xx_mbox_dma_map(struct ar71xx_pcm_rt_priv *rtpriv, dma_addr_t baseaddr,
@@ -1664,7 +1694,13 @@
 +	unsigned int offset = 0;
 +	int desc_numb = 0;
 +
++	//XXX
++	bool first_list_set = false;
++	struct ar71xx_pcm_desc *first_desc;
++
++#if AR71XX_MBOX_DEBUG_MESSAGES
 +	printk("in dma_map\n");
++#endif
 +
 +	spin_lock(&ar71xx_pcm_lock);
 +
@@ -1682,6 +1718,7 @@
 +		list_add_tail(&desc->list, head);
 +
 +		desc->OWN = 1;
++
 +		//not really needed
 +		desc->rsvd1 = desc->rsvd2 = desc->rsvd3 = desc->EOM = 0;
 +
@@ -1707,13 +1744,17 @@
 +		}
 +
 +		offset += desc->size;
++
++		//XXX
 +		desc_numb++;
-+#if 1
++#if AR71XX_MBOX_DEBUG_MESSAGES
 +		printk("descriptor %d:\n\tdesc->BufPtr: 0x%08x\n\tdesc->phys: 0x%08x\n\tdesc->size: %d\n", desc_numb, desc->BufPtr, desc->phys, desc->size);
 +#endif
 +	} while (offset < bufsize);
 +
++#if AR71XX_MBOX_DEBUG_MESSAGES
 +	printk("created %d descriptor(s)\n", desc_numb);
++#endif
 +
 +	/* Once all the descriptors have been created, we can close the loop
 +	 * by pointing from the last one to the first one */
@@ -1722,9 +1763,6 @@
 +	prev->NextPtr = desc->phys;
 +
 +	spin_unlock(&ar71xx_pcm_lock);
-+
-+	printk("desc: 0x%08x\nprev: 0x%08x\n", desc->BufPtr, prev->BufPtr);
-+
 +
 +	return 0;
 +}
@@ -1764,7 +1802,7 @@
 +}
 --- /dev/null
 +++ b/sound/soc/ar71xx/ar71xx-pcm.c
-@@ -0,0 +1,660 @@
+@@ -0,0 +1,691 @@
 +/*
 + * ath-pcm.c -- ALSA PCM interface for the QCA Wasp based audio interface
 + *
@@ -1804,6 +1842,15 @@
 +
 +#define BUFFER_BYTES_MAX 16 * 4095 * 16
 +#define PERIOD_BYTES_MIN 64
++
++
++#define AR71XX_PCM_DEBUG	0
++
++
++#if 0
++unsigned int ar71xx_pcm_pointer_counter = 0;
++#define AR71XX_PCM_POINTER_COUNTER_MAX		10
++#endif
 +
 +
 +
@@ -1884,10 +1931,12 @@
 +#endif
 +
 +		if(played_size > period_bytes)
-+			printk("Played more than one period bytes played: %d\n",played_size);
-+	
++			printk("Played more than one period, bytes played: %d\n",played_size);
++
 +		rtpriv->elapsed_size += played_size;
 +		ar71xx_mbox_interrupt_ack(AR9331_MBOX_INT_ENABLE_RX_DMA_COMPLETE, prdata);
++
++
 +		if(rtpriv->elapsed_size >= period_bytes)
 +		{
 +			rtpriv->elapsed_size %= period_bytes;
@@ -1916,7 +1965,7 @@
 +	}
 +#if 0
 +	if(status & mystatus) {
-+		//printk("***interrupt error***, value:%08x\n", status);
++		printk("***interrupt error***, value:%08x\n", status);
 +		ar71xx_mbox_interrupt_ack(status, prdata);
 +	}
 +#endif
@@ -1933,16 +1982,9 @@
 +	struct ar71xx_pcm_rt_priv *rtpriv;
 +	int err;
 +
++#if AR71XX_PCM_DEBUG
 +	printk("in pcm_open()\n");
-+
-+
-+#if 1
-+	/* setup new platform private struct (input and output pcm substream) */
-+	//XXX 
-+	//prdata = kzalloc(sizeof(struct ar71xx_pcm_pltfm_priv), GFP_KERNEL);
-+	//if (prdata == NULL)
-+	//	return -ENOMEM;
-+	//snd_soc_platform_set_drvdata(platform, prdata);
++#endif
 +
 +	if (!prdata->irq_en) {
 +		err = request_irq(ATH79_MISC_IRQ(7), ar71xx_pcm_interrupt, 0,
@@ -1954,12 +1996,8 @@
 +			return -EBUSY;
 +		}
 +		prdata->irq_en = true;
-+		printk("requested interrupt\n");
 +	}
 +
-+	//snd_soc_platform_set_drvdata(platform, prdata);
-+//	}
-+#endif
 +
 +	/* setup substream */
 +	if (ss->stream == SNDRV_PCM_STREAM_PLAYBACK) {
@@ -2002,7 +2040,9 @@
 +	struct ar71xx_pcm_pltfm_priv *prdata = snd_soc_platform_get_drvdata(platform);
 +	struct ar71xx_pcm_rt_priv *rtpriv;
 +
++#if AR71XX_PCM_DEBUG
 +	printk("in pcm_close\n");
++#endif
 +
 +	if (!prdata)
 +		return 0;
@@ -2033,7 +2073,9 @@
 +	int ret;
 +	unsigned int buffer_size, period_size, sample_size, sample_rate, frames, channels;
 +
++#if AR71XX_PCM_DEBUG
 +	printk("in pcm_hw_params\n");
++#endif
 +
 +	// Does this routine need to handle new clock changes in the hw_params?
 +	rtpriv = runtime->private_data;
@@ -2073,8 +2115,6 @@
 +	struct snd_pcm_runtime *runtime = ss->runtime;
 +	struct ar71xx_pcm_rt_priv *rtpriv;
 +	
-+	printk("in pcm_hw_free -> %s\n", ss->name);
-+
 +	rtpriv = runtime->private_data;
 +	ar71xx_mbox_dma_unmap(rtpriv);
 +	snd_pcm_set_runtime_buffer(ss, NULL);
@@ -2092,8 +2132,9 @@
 +	struct ar71xx_pcm_pltfm_priv *dev = dev_get_drvdata(platform->dev);
 +
 +
-+	printk("in pcm_prepare, dev=%p, dev->mbox_regmap %p, dev->reset_regmap %p\n", 
-+		dev, dev->mbox_regmap, dev->reset_regmap);
++#if AR71XX_PCM_DEBUG
++	printk("in pcm_prepare\n");
++#endif
 +
 +
 +	rtpriv = runtime->private_data;
@@ -2101,7 +2142,6 @@
 +
 +	/* When setup the first stream should reset the DMA MBOX controller */
 +	if(cpu_dai->active == 1) {
-+		printk("cpu_dai->active == 1; doing and mbox_dma_reset\n");
 +		ar71xx_mbox_dma_reset(dev);
 +	}
 +
@@ -2122,49 +2162,70 @@
 +	struct snd_soc_platform *platform = rtd->platform;
 +	struct ar71xx_pcm_pltfm_priv *dev = dev_get_drvdata(platform->dev);
 +
-+	printk("in pcm_trigger, dev=%p\n", dev);
++	//XXX for debugging
++	char *command = "unknown";
++
 +
 +	switch (cmd) {
 +	case SNDRV_PCM_TRIGGER_START:
 +		ar71xx_mbox_dma_start(rtpriv, dev);
++		command = "start";
 +		break;
 +	case SNDRV_PCM_TRIGGER_STOP:
 +		ar71xx_mbox_dma_stop(rtpriv, dev);
++		command = "stop";
 +		break;
 +	default:
 +		return -EINVAL;
 +	}
 +
++#if AR71XX_PCM_DEBUG
++	printk("in pcm_trigger, command: %s\n", command);
++#endif
++	printk("in pcm_trigger, command: %s\n", command);
++
 +	return 0;
 +}
 +
++/* is called each mbox interrupt */
 +static snd_pcm_uframes_t ar71xx_pcm_pointer(struct snd_pcm_substream *ss)
 +{
 +	struct snd_pcm_runtime *runtime = ss->runtime;
-+	struct ar71xx_pcm_rt_priv *rtpriv;
++	struct ar71xx_pcm_rt_priv *rtpriv = runtime->private_data;
 +	snd_pcm_uframes_t ret = 0;
-+	snd_pcm_uframes_t ret_frames = 0;
++	//snd_pcm_uframes_t ret_frames = 0;
 +
 +
-+	rtpriv = runtime->private_data;
++	//rtpriv = runtime->private_data;
 +
-+	if(rtpriv->last_played == NULL)
++	if(rtpriv->last_played == NULL) {
 +		ret = 0;
-+	else
++	} else {
 +		ret = rtpriv->last_played->BufPtr - runtime->dma_addr;
++	}
 +
-+	ret_frames = bytes_to_frames(runtime, ret);
++
++	//printk("pointer returns %d\n", ret);
 +
 +#if 0
-+	printk("called pcm_pointer, ret: %d, ret_frames: %d\n", ret, ret_frames);
++	ar71xx_pcm_pointer_counter++;
++	if (ar71xx_pcm_pointer_counter > AR71XX_PCM_POINTER_COUNTER_MAX) {
++		ret = 0x11fb8;
++		ar71xx_pcm_pointer_counter = 0;
++	}
 +#endif
++
 +	
++	ret = bytes_to_frames(runtime, ret);
++
 +	return ret;
 +}
 +
 +static int ar71xx_pcm_mmap(struct snd_pcm_substream *ss, struct vm_area_struct *vma)
 +{
++#if AR71XX_PCM_DEBUG
 +	printk("in pcm_mmap\n");
++#endif
 +
 +	return remap_pfn_range(vma, vma->vm_start,
 +			ss->dma_buffer.addr >> PAGE_SHIFT,
@@ -2188,6 +2249,10 @@
 +	struct snd_pcm_substream *ss;
 +	struct snd_dma_buffer *buf;
 +	int stream;
++
++#if AR71XX_PCM_DEBUG
++	printk("in pcm_free_dma_buffers\n");
++#endif
 +
 +	for (stream = 0; stream < 2; stream++) {
 +		ss = pcm->streams[stream].substream;
@@ -2236,7 +2301,9 @@
 +	struct snd_pcm *pcm = rtd->pcm;
 +	int ret = 0;
 +
++#if AR71XX_PCM_DEBUG
 +	printk("in soc_pcm_new\n");
++#endif
 +
 +	if (!card->dev->dma_mask)
 +		card->dev->dma_mask = &ar71xx_pcm_dmamask;
@@ -2278,7 +2345,8 @@
 +		.reg_stride = 4,
 +		.val_bits = 32,
 +		.max_register = AR9331_SLIC_MBOX_DMA_FIFO_RESET,
-+		.cache_type = REGCACHE_RBTREE,
++		.cache_type = REGCACHE_NONE,
++		//.cache_type = REGCACHE_RBTREE,
 +	},
 +	/* Reset Registers */
 +	{
@@ -2300,7 +2368,7 @@
 +
 +static int ar71xx_pcm_probe(struct platform_device *pdev)
 +{
-+	struct ar71xx_pcm_dev *dev;
++	//struct ar71xx_pcm_dev *dev;
 +	struct ar71xx_pcm_pltfm_priv *prdata;
 +
 +	int ret, i;
@@ -2326,8 +2394,6 @@
 +			dev_err(&pdev->dev, "PCM probe: regmap init failed\n");
 +			return PTR_ERR(regmap[i]);
 +		}
-+	
-+		printk("allocated regmap[%d] at %p\n", i, regmap[i]);
 +	}
 +
 +	prdata = kzalloc(sizeof(struct ar71xx_pcm_pltfm_priv), GFP_KERNEL);
@@ -2361,10 +2427,13 @@
 +	prdata->dev = &pdev->dev;
 +	dev_set_drvdata(&pdev->dev, prdata);
 +
++#if 0
 +	struct ar71xx_pcm_pltfm_priv *prdata_test = dev_get_drvdata(&pdev->dev);
++#endif
 +
++#if 0
 +	printk("private data at %p\nprdata->mbox_regmap at %p\nprdata->reset_regmap at %p\n", prdata_test, prdata_test->mbox_regmap, prdata_test->reset_regmap);
-+
++#endif
 +#if 0
 +	/* setup new platform private struct (input and output pcm substream) */
 +	prdata = devm_kzalloc(&pdev->dev, sizeof(struct ar71xx_pcm_pltfm_priv), GFP_KERNEL);
@@ -2427,7 +2496,7 @@
 +MODULE_LICENSE("GPL v2");
 --- /dev/null
 +++ b/sound/soc/ar71xx/ar71xx-pcm.h
-@@ -0,0 +1,196 @@
+@@ -0,0 +1,197 @@
 +#ifndef AR71XX_PCM_H_
 +#define AR71XX_PCM_H_
 +
@@ -2491,6 +2560,7 @@
 +//TODO find extern spinlock
 +extern spinlock_t ar71xx_pcm_lock;
 +
++//TODO delete me!
 +struct ar71xx_pcm_dev {
 +	struct device		*dev;
 +
