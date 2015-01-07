@@ -194,27 +194,16 @@ endef
 $(eval $(call KernelPackage,sound-soc-ac97))
 
 
-define KernelPackage/sound-soc-ar71xx-i2s
-  TITLE:=I2S Driver Module for AR71XX
-  KCONFIG:=CONFIG_SND_SOC_AR71XX_I2S 
-  FILES:=$(LINUX_DIR)/sound/soc/ar71xx/snd-soc-ar71xx-i2s.ko
-  AUTOLOAD:=$(call AutoLoad,58,snd-soc-ar71xx-i2s)
-  DEPENDS:= \
-	+kmod-sound-soc-core \
-	+kmod-regmap
-  $(call AddDepends/sound)
-endef
-
-$(eval $(call KernelPackage,sound-soc-ar71xx-i2s))
-
 
 define KernelPackage/sound-soc-ar71xx-pcm
   TITLE:=PCM Driver Module for AR71XX
   KCONFIG:= \
-	CONFIG_SND_SOC_AR71XX_PCM 
+	CONFIG_SND_SOC_AR71XX_PCM \
+	CONFIG_SND_SOC_AR71XX_I2S
   FILES:= \
-	$(LINUX_DIR)/sound/soc/ar71xx/snd-soc-ar71xx-pcm.ko 
-  AUTOLOAD:=$(call AutoLoad,59,snd-soc-ar71xx-mbox snd-soc-ar71xx-pcm)
+	$(LINUX_DIR)/sound/soc/ar71xx/snd-soc-ar71xx-pcm.ko \
+	$(LINUX_DIR)/sound/soc/ar71xx/snd-soc-ar71xx-i2s.ko
+  AUTOLOAD:=$(call AutoLoad,59,snd-soc-ar71xx-mbox snd-soc-ar71xx-pcm snd-soc-ar71xx-i2s)
   DEPENDS:= \
 	+kmod-sound-soc-core \
 	+kmod-regmap
@@ -232,12 +221,27 @@ define KernelPackage/sound-soc-ar71xx-hifiberry-dac
 	$(LINUX_DIR)/sound/soc/ar71xx/snd-soc-ar71xx-hifiberry-dac.ko
   AUTOLOAD:=$(call AutoLoad,60,snd-soc-pcm5102a snd-soc-ar71xx-hifiberry-dac)
   DEPENDS:= \
-	+kmod-sound-soc-core \
-	+kmod-sound-soc-ar71xx-i2s 
+	+kmod-sound-soc-ar71xx-pcm
   $(call AddDepends/sound)
 endef
 
 $(eval $(call KernelPackage,sound-soc-ar71xx-hifiberry-dac))
+
+
+define KernelPackage/sound-soc-ar71xx-tas5711-evb
+  TITLE:=Hifiberry Codec Driver
+  KCONFIG:=CONFIG_SND_SOC_AR71XX_TAS5711_EVB
+  FILES:= \
+	$(LINUX_DIR)/sound/soc/codecs/snd-soc-tas5711.ko \
+	$(LINUX_DIR)/sound/soc/ar71xx/snd-soc-ar71xx-tas5711-ev-board.ko
+  AUTOLOAD:=$(call AutoLoad,61,snd-soc-tas5711 snd-soc-ar71xx-tas5711-ev-board)
+  DEPENDS:= \
+	+kmod-sound-soc-core \
+	+kmod-sound-soc-ar71xx-pcm
+  $(call AddDepends/sound)
+endef
+
+$(eval $(call KernelPackage,sound-soc-ar71xx-tas5711-evb))
 
 
 define KernelPackage/sound-soc-imx
